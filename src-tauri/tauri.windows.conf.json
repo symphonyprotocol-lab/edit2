@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["nsis"],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown", "mdown", "mkd", "mdx"],
+        "name": "edit2.Markdown",
+        "description": "Markdown 文档"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/installer-hooks.nsh",
+        "languages": ["English", "SimpChinese"]
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+# Builds the Windows installer and attaches it to a GitHub release.
+# Runs when a release is published; run it by hand to add the installer to an
+# existing release (e.g. one published before this workflow existed).
+name: Release (Windows)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and upload to, e.g. v0.2.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # Bundle targets and installer settings come from src-tauri/tauri.windows.conf.json.
+      - run: npm run tauri build
+
+      - name: Upload installer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" src-tauri/target/release/bundle/nsis/*-setup.exe --clobber

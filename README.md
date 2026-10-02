@@ -8,7 +8,10 @@ Built with Tauri 2 and CodeMirror 6. The layout mockup is in [design/mockup.html
 
 ## Download
 
-Get the latest `.dmg` from [Releases](https://github.com/symphonyprotocol-lab/edit2/releases). It runs on Apple silicon and Intel Macs (macOS 10.13 or later). The app is not signed with an Apple Developer ID, so the first time, right-click edit2 in Applications and choose Open, or run `xattr -dr com.apple.quarantine /Applications/edit2.app`.
+Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edit2/releases). Neither build is code-signed.
+
+- **macOS**: the `.dmg` runs on Apple silicon and Intel Macs (macOS 10.13 or later). The first time, right-click edit2 in Applications and choose Open, or run `xattr -dr com.apple.quarantine /Applications/edit2.app`.
+- **Windows**: `edit2_<version>_x64-setup.exe` installs for the current user (Windows 10 or later; it installs WebView2 if it is missing). If SmartScreen stops it, choose More info → Run anyway. The installer makes edit2 the default app for Markdown only; the other formats appear under Open with, so your browser keeps `.html` and `.svg`.
 
 ## Formats
 
@@ -82,13 +85,15 @@ npm run tauri build -- --target universal-apple-darwin   # Apple silicon + Intel
 cd src-tauri && cargo test                # encoding, preview protocol and migration tests
 ```
 
+Publishing a GitHub release runs [.github/workflows/release-windows.yml](.github/workflows/release-windows.yml), which builds the Windows installer and attaches it to the release; run the workflow by hand with a tag to add the installer to an older release. The macOS `.dmg` is still built locally with the universal target above.
+
 `npm run dev` serves the UI alone in a browser. Tauri calls are stubbed; in the browser console, `edit2.open("/absolute/path/file.json")` opens a file through the dev server.
 
 ## Adding a format
 
 1. Create `src/formats/<id>/index.ts` exporting a `FormatPlugin` (see `src/formats/types.ts`): its extensions, a lazily loaded editor language, preview renderer and formatter, and a status bar summary. A preview renders into the element it is given and returns source-line anchors for scroll sync; it reaches the app only through its `PreviewContext`.
 2. Register it in `src/formats/index.ts`.
-3. Add its extensions to `bundle.fileAssociations` in `src-tauri/tauri.conf.json`. `npm run build` fails if the two lists differ.
+3. Add its extensions to `bundle.fileAssociations` in `src-tauri/tauri.conf.json`, and on Windows to the Open with list in `src-tauri/windows/installer-hooks.nsh` (or to `src-tauri/tauri.windows.conf.json` if edit2 should become the default app). `npm run build` fails if the lists differ.
 
 ## Layout
 
@@ -115,5 +120,8 @@ src-tauri/src/
   migrate.rs             one-time copy of mdit's data
   menu.rs                native macOS menu
   mac_quit.rs            applicationShouldTerminate hook so a Dock/AppleScript quit can prompt
+src-tauri/tauri.windows.conf.json  Windows bundle: NSIS installer, Markdown-only default association
+src-tauri/windows/installer-hooks.nsh  adds the other formats to Explorer's Open with list
 scripts/check-formats.mjs  checks plugins and file associations list the same extensions
+.github/workflows/release-windows.yml  builds the Windows installer for each release
 ```
