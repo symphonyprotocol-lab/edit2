@@ -41,6 +41,8 @@ export interface InitData {
   files: string[];
   /** Staging area where untitled documents are auto-saved. */
   draftsDir: string;
+  /** Tell the user once (e.g. data migrated from mdit). */
+  notice?: string | null;
 }
 
 export interface Written {
@@ -82,6 +84,10 @@ export const host = {
 
   /** Origin of the backend's `preview:` protocol (Windows maps custom schemes to http). */
   previewOrigin: /Windows/i.test(navigator.userAgent) ? "http://preview.localhost" : "preview://localhost",
+
+  loadSettings: (): Promise<Record<string, unknown>> => invoke("load_settings"),
+
+  setSetting: (key: string, value: unknown): Promise<void> => invoke("set_setting", { key, value }),
 
   allowAssets: (paths: string[]): Promise<void> =>
     inTauri ? invoke("allow_assets", { paths }) : Promise.resolve(),

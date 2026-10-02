@@ -13,7 +13,9 @@ mod codec;
 mod mac_quit;
 #[cfg(target_os = "macos")]
 mod menu;
+mod migrate;
 mod preview;
+mod settings;
 
 /// What the backend knows about each editor window. A window has one tab per file.
 #[derive(Default)]
@@ -36,6 +38,8 @@ struct AppState {
     last_focused: Mutex<Option<String>>,
     /// Staged drafts have been handed to a window for restoring.
     drafts_restored: AtomicBool,
+    /// One-time message for the first window (data migrated from mdit).
+    notice: Mutex<Option<String>>,
 }
 
 #[derive(Serialize)]
@@ -45,6 +49,8 @@ struct InitData {
     files: Vec<String>,
     /// Staging area for untitled documents.
     drafts_dir: String,
+    /// Something to tell the user once, e.g. that mdit's data was migrated.
+    notice: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -130,7 +136,7 @@ fn create_window(app: &AppHandle, pending: Vec<String>) -> tauri::Result<Webview
         });
 
     let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-        .title("mdit")
+        .title("edit2")
         .inner_size(920.0, 680.0)
         .min_inner_size(420.0, 320.0)
         .visible(false);
@@ -230,13 +236,13 @@ fn front_window(app: &AppHandle) -> Option<WebviewWindow> {
 
 /// Replace `path` atomically: write a sibling temp file, then rename it over
 /// the original, so a failed or interrupted save never truncates the file.
-fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     // Write through symlinks so the link itself is not replaced by a file.
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
         return std::fs::write(&target, content);
     };
-    let tmp = dir.join(format!(".{}.mdit-{}.tmp", name.to_string_lossy(), std::process::id()));
+    let tmp = dir.join(format!(".{}.edit2-{}.tmp", name.to_string_lossy(), std::process::id()));
 
     let mut file = match std::fs::File::create(&tmp) {
         Ok(f) => f,
@@ -305,6 +311,7 @@ fn init_window(
     Ok(InitData {
         files,
         drafts_dir: dir.to_string_lossy().into_owned(),
+        notice: state.notice.lock().unwrap().take(),
     })
 }
 
@@ -414,6 +421,24 @@ fn set_format_menu(app: AppHandle, format: bool, minify: bool) {
     let _ = (app, format, minify);
 }
 
+#[tauri::command]
+fn load_settings(settings: tauri::State<'_, settings::Settings>) -> serde_json::Map<String, serde_json::Value> {
+    settings.all()
+}
+
+/// Change one preference and tell every window (they keep a copy).
+#[tauri::command]
+fn set_setting(
+    app: AppHandle,
+    settings: tauri::State<'_, settings::Settings>,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    settings.set(key.clone(), value.clone())?;
+    let _ = app.emit("setting-changed", serde_json::json!({ "key": key, "value": value }));
+    Ok(())
+}
+
 /// Publish an HTML document for the script-enabled preview (see preview.rs).
 #[tauri::command]
 fn serve_preview(sites: tauri::State<'_, preview::Sites>, token: String, path: Option<String>, html: String) {
@@ -432,6 +457,8 @@ fn quit(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before any webview exists (and creates its storage).
+    let migration = migrate::run();
     let mut builder = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -450,7 +477,11 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::default())
+        .manage(AppState {
+            notice: Mutex::new(migration.map(|r| r.message())),
+            ..Default::default()
+        })
+        .manage(settings::Settings::default())
         .manage(preview::Sites::default())
         .register_uri_scheme_protocol("preview", |ctx, request| {
             ctx.app_handle().state::<preview::Sites>().serve(&request)
@@ -464,10 +495,17 @@ pub fn run() {
             allow_assets,
             set_format_menu,
             serve_preview,
+            load_settings,
+            set_setting,
             file_mtime,
             quit
         ])
         .setup(|app| {
+            if let Ok(dir) = app.path().app_data_dir() {
+                let _ = std::fs::create_dir_all(&dir);
+                app.state::<settings::Settings>().load(dir.join("settings.json"));
+            }
+
             #[cfg(target_os = "macos")]
             {
                 menu::install(app.handle())?;
@@ -500,7 +538,7 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while running mdit")
+        .expect("error while running edit2")
         .run(|app, event| {
             // Quit requested from outside our menu (Dock, AppleScript, logout):
             // close windows one by one so each can ask about unsaved changes.
@@ -514,7 +552,7 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             match event {
-                // Finder "Open With", dragging onto the Dock icon, `open -a mdit file.md`.
+                // Finder "Open With", dragging onto the Dock icon, `open -a edit2 file.md`.
                 tauri::RunEvent::Opened { urls } => {
                     for url in urls {
                         if let Ok(path) = url.to_file_path() {

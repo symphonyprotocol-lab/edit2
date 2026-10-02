@@ -72,7 +72,7 @@ export async function renderDiagram(source: string): Promise<string> {
   const hit = cache.get(key);
   if (hit) return hit;
   const mermaid = await load();
-  const { svg } = await mermaid.render(`mdit-mermaid-${++seq}`, source);
+  const { svg } = await mermaid.render(`edit2-mermaid-${++seq}`, source);
   cache.set(key, svg);
   if (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!);
   return svg;

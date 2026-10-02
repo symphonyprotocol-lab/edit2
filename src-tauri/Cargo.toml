@@ -1,11 +1,11 @@
 [package]
-name = "mdit"
+name = "edit2"
 version = "0.1.0"
-description = "A quick single-file Markdown editor"
+description = "A quick editor and viewer for text and data files"
 edition = "2021"
 
 [lib]
-name = "mdit_lib"
+name = "edit2_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -12,18 +12,18 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
 
     let app_menu = Submenu::with_items(
         app,
-        "mdit",
+        "edit2",
         true,
         &[
-            &PredefinedMenuItem::about(app, Some("关于 mdit"), None)?,
+            &PredefinedMenuItem::about(app, Some("关于 edit2"), None)?,
             &sep()?,
             &PredefinedMenuItem::services(app, None)?,
             &sep()?,
-            &PredefinedMenuItem::hide(app, Some("隐藏 mdit"))?,
+            &PredefinedMenuItem::hide(app, Some("隐藏 edit2"))?,
             &PredefinedMenuItem::hide_others(app, None)?,
             &PredefinedMenuItem::show_all(app, None)?,
             &sep()?,
-            &item("quit", "退出 mdit", "CmdOrCtrl+Q")?,
+            &item("quit", "退出 edit2", "CmdOrCtrl+Q")?,
         ],
     )?;
 

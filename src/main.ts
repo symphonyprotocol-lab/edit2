@@ -52,20 +52,38 @@ const toastEl = $("toast");
 
 // ---------- persisted preferences ----------
 
+/**
+ * Preferences live in settings.json, kept by the backend; each window holds a
+ * copy and hears about changes from other windows. In a plain browser
+ * (development) they fall back to localStorage.
+ */
+const settings: Record<string, unknown> = {};
+
 const prefs = {
   get<T>(key: string, fallback: T): T {
-    try {
-      const raw = localStorage.getItem(`mdit.${key}`);
-      return raw === null ? fallback : (JSON.parse(raw) as T);
-    } catch {
-      return fallback;
-    }
+    return key in settings ? (settings[key] as T) : fallback;
   },
   set(key: string, value: unknown) {
-    try {
-      localStorage.setItem(`mdit.${key}`, JSON.stringify(value));
-    } catch {
-      /* storage unavailable */
+    settings[key] = value;
+    if (inTauri) host.setSetting(key, value).catch(() => {});
+    else localStorage.setItem(`edit2.${key}`, JSON.stringify(value));
+  },
+  /** Load the settings; the first time, take over what mdit kept in localStorage. */
+  async load() {
+    const stored = inTauri ? await host.loadSettings().catch(() => ({})) : {};
+    if (Object.keys(stored).length) return void Object.assign(settings, stored);
+    for (const prefix of inTauri ? ["mdit."] : ["mdit.", "edit2."]) {
+      for (let i = 0; i < localStorage.length; i++) {
+        const name = localStorage.key(i)!;
+        if (!name.startsWith(prefix)) continue;
+        try {
+          const value = JSON.parse(localStorage.getItem(name)!);
+          settings[name.slice(prefix.length)] = value;
+          if (inTauri) await host.setSetting(name.slice(prefix.length), value);
+        } catch {
+          /* skip a broken entry */
+        }
+      }
     }
   },
 };
@@ -121,7 +139,7 @@ interface Tab {
 const AUTOSAVE_DELAY = 800;
 
 let mode: Mode = "write";
-let fontSize = prefs.get<number>("fontSize", 15);
+let fontSize = 15;
 let draftsDir = "";
 let nextTabId = 1;
 
@@ -432,11 +450,11 @@ function updateCount() {
 let countSeq = 0;
 
 let toastTimer = 0;
-function toast(text: string) {
+function toast(text: string, ms = 1800) {
   toastEl.textContent = text;
   toastEl.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toastEl.classList.remove("show"), 1800);
+  toastTimer = window.setTimeout(() => toastEl.classList.remove("show"), ms);
 }
 
 // ---------- preview ----------
@@ -870,9 +888,7 @@ function renderRecent() {
   );
 }
 
-window.addEventListener("storage", (e) => {
-  if (e.key === "mdit.recent") renderRecent();
-});
+
 
 // ---------- status bar: format menu ----------
 
@@ -1602,7 +1618,8 @@ setInterval(() => document.hasFocus() && checkDisk(), 2500);
 
 async function boot() {
   app.classList.add(isMac && inTauri ? "platform-mac" : "platform-other");
-  applyFont(fontSize);
+  await prefs.load();
+  applyFont(prefs.get("fontSize", 15));
   applyMode(preferredMode(doc.format));
   renderRecent();
   refreshChrome();
@@ -1611,6 +1628,12 @@ async function boot() {
   if (win) {
     await host.listen<string>("menu", (id) => commands[id]?.());
     await host.listen<string>("open-path", (path) => openPath(path));
+    // Another window changed a preference.
+    await host.listen<{ key: string; value: unknown }>("setting-changed", ({ key, value }) => {
+      if (value === null) delete settings[key];
+      else settings[key] = value;
+      if (key === "recent") renderRecent();
+    });
 
     await win.onCloseRequested(async (e) => {
       if (!(await prepareToClose())) e.preventDefault();
@@ -1629,6 +1652,7 @@ async function boot() {
   // Listeners are live, so the backend may now route files to this window.
   const init = await host.initWindow();
   draftsDir = init.draftsDir;
+  if (init.notice) toast(init.notice, 6000);
   for (const path of init.files) await openPath(path);
   await win?.show();
   await win?.setFocus();

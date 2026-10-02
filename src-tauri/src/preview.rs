@@ -9,7 +9,6 @@
 //! resolve against its folder and only return web resources (styles, scripts,
 //! images, fonts, media) inside that folder or its parent.
 
-use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 

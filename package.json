@@ -1,11 +1,12 @@
 {
-  "name": "mdit",
+  "name": "edit2",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "node scripts/check-formats.mjs && tsc && vite build",
+    "check:formats": "node scripts/check-formats.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
