@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>mdit</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app" class="is-empty" data-mode="write">
+      <header class="titlebar" data-tauri-drag-region>
+        <div class="tb-side" data-tauri-drag-region></div>
+        <div class="tb-title" data-tauri-drag-region>
+          <span class="dirty-dot" aria-hidden="true"></span>
+          <span class="doc-name" id="doc-name" data-tauri-drag-region></span>
+          <span class="doc-dir" id="doc-dir" data-tauri-drag-region></span>
+        </div>
+        <div class="tb-side tb-right" data-tauri-drag-region>
+          <div class="seg" role="radiogroup" aria-label="视图">
+            <button type="button" role="radio" data-mode="write" title="写作 ⌘1">写作</button>
+            <button type="button" role="radio" data-mode="split" title="分栏 ⌘2">分栏</button>
+            <button type="button" role="radio" data-mode="read" title="阅读 ⌘3">阅读</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="empty" id="empty">
+          <div class="empty-box">
+            <div class="wordmark">md<b>it</b></div>
+            <p class="tagline">一次只编辑一个 Markdown 文件</p>
+            <div class="actions">
+              <button type="button" class="btn primary" id="btn-new">新建 <kbd data-key="N"></kbd></button>
+              <button type="button" class="btn" id="btn-open">打开… <kbd data-key="O"></kbd></button>
+            </div>
+            <div class="recent" id="recent" hidden>
+              <h4>最近</h4>
+              <ul id="recent-list"></ul>
+            </div>
+            <p class="drop-hint">或者把 .md 文件拖到窗口任意位置</p>
+          </div>
+        </section>
+
+        <div class="pane editor-pane" id="editor"></div>
+        <div class="pane preview-pane" id="preview-scroll">
+          <article class="md" id="preview"></article>
+        </div>
+      </main>
+
+      <footer class="status">
+        <span id="st-pos"></span>
+        <span id="st-count"></span>
+        <span class="spacer"></span>
+        <span id="st-save"></span>
+        <span>Markdown</span>
+      </footer>
+
+      <div class="drop-overlay" aria-hidden="true"><span>松开以打开</span></div>
+      <div class="toast" id="toast" role="status"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
