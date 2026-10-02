@@ -72,6 +72,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             &item("mode_split", "分栏", "CmdOrCtrl+2")?,
             &item("mode_read", "阅读", "CmdOrCtrl+3")?,
             &item("toggle_preview", "切换预览", "CmdOrCtrl+\\")?,
+            &item("toggle_wrap", "自动换行", "Alt+Z")?,
             &sep()?,
             &item("zoom_in", "放大字号", "CmdOrCtrl+=")?,
             &item("zoom_out", "缩小字号", "CmdOrCtrl+-")?,

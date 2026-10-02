@@ -77,8 +77,3 @@ export async function renderDiagram(source: string): Promise<string> {
   if (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!);
   return svg;
 }
-
-/** Run `cb` when the system switches between light and dark. */
-export function onThemeChange(cb: () => void) {
-  darkQuery.addEventListener("change", cb);
-}

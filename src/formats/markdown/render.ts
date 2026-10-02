@@ -80,16 +80,3 @@ export function renderMarkdown(source: string): string {
     FORBID_TAGS: ["style", "form"],
   });
 }
-
-// ---------- word counting ----------
-
-const CJK = /[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]/g;
-const WORD = /[A-Za-z0-9À-ɏ]+(?:['’.-][A-Za-z0-9À-ɏ]+)*/g;
-
-export function countWords(text: string): { words: number; minutes: number } {
-  const cjk = text.match(CJK)?.length ?? 0;
-  const latin = text.replace(CJK, " ").match(WORD)?.length ?? 0;
-  const words = cjk + latin;
-  const minutes = words === 0 ? 0 : Math.max(1, Math.round(cjk / 400 + latin / 220));
-  return { words, minutes };
-}

@@ -32,7 +32,21 @@ export interface Written {
   mtime: number | null;
 }
 
-const MD_FILTER = [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "mkd", "mdx", "txt"] }];
+export interface DialogFilter {
+  name: string;
+  extensions: string[];
+}
+
+/**
+ * Dev only, in a plain browser: read files through the vite server so the UI
+ * can be exercised with real documents.
+ */
+async function devRead(path: string): Promise<FileData> {
+  if (!import.meta.env.DEV) throw new Error("需要在 Tauri 中运行");
+  const res = await fetch(`/@fs${path}`);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return { path, content: await res.text(), mtime: null };
+}
 
 export const host = {
   /** What this window should open as tabs when it boots. */
@@ -45,8 +59,7 @@ export const host = {
   allowAssets: (paths: string[]): Promise<void> =>
     inTauri ? invoke("allow_assets", { paths }) : Promise.resolve(),
 
-  readFile: (path: string): Promise<FileData> =>
-    inTauri ? invoke("read_file", { path }) : Promise.reject(new Error("需要在 Tauri 中运行")),
+  readFile: (path: string): Promise<FileData> => (inTauri ? invoke("read_file", { path }) : devRead(path)),
 
   writeFile: (path: string, content: string): Promise<Written> =>
     inTauri ? invoke("write_file", { path, content }) : Promise.resolve({ path, mtime: null }),
@@ -59,15 +72,15 @@ export const host = {
 
   quit: () => (inTauri ? invoke("quit") : Promise.resolve()),
 
-  async pickFile(): Promise<string | null> {
+  async pickFile(filters: DialogFilter[]): Promise<string | null> {
     if (!inTauri) return null;
-    const picked = await openDialog({ multiple: false, directory: false, filters: MD_FILTER });
+    const picked = await openDialog({ multiple: false, directory: false, filters });
     return typeof picked === "string" ? picked : null;
   },
 
-  async pickSavePath(defaultPath: string): Promise<string | null> {
+  async pickSavePath(defaultPath: string, filters: DialogFilter[]): Promise<string | null> {
     if (!inTauri) return null;
-    return saveDialog({ defaultPath, filters: MD_FILTER });
+    return saveDialog({ defaultPath, filters });
   },
 
   /** Ask what to do with unsaved changes. */

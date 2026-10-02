@@ -1,4 +1,4 @@
-import { EditorState, EditorSelection, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -12,9 +12,7 @@ import {
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { HighlightStyle, syntaxHighlighting, indentOnInput, bracketMatching } from "@codemirror/language";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { languages } from "@codemirror/language-data";
-import { tags as t, styleTags } from "@lezer/highlight";
+import { tags as t } from "@lezer/highlight";
 
 const theme = EditorView.theme({
   "&": {
@@ -85,62 +83,28 @@ const highlight = HighlightStyle.define([
   { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--syn-fn)" },
   { tag: [t.typeName, t.className, t.namespace, t.tagName], color: "var(--syn-type)" },
   { tag: [t.attributeName, t.propertyName], color: "var(--syn-fn)" },
+  { tag: [t.attributeValue], color: "var(--syn-string)" },
+  { tag: [t.angleBracket, t.separator, t.punctuation, t.bracket], color: "var(--ink-3)" },
+  { tag: [t.invalid], color: "var(--warn)" },
 ]);
 
-/** Wrap the selection in `mark`, or unwrap it if it is already wrapped. */
-function toggleWrap(mark: string) {
-  return (view: EditorView) => {
-    const { state } = view;
-    const tr = state.changeByRange((range) => {
-      const before = state.sliceDoc(range.from - mark.length, range.from);
-      const after = state.sliceDoc(range.to, range.to + mark.length);
-      if (before === mark && after === mark) {
-        return {
-          changes: [
-            { from: range.from - mark.length, to: range.from },
-            { from: range.to, to: range.to + mark.length },
-          ],
-          range: EditorSelection.range(range.from - mark.length, range.to - mark.length),
-        };
-      }
-      return {
-        changes: [
-          { from: range.from, insert: mark },
-          { from: range.to, insert: mark },
-        ],
-        range: EditorSelection.range(range.from + mark.length, range.to + mark.length),
-      };
-    });
-    view.dispatch(state.update(tr, { scrollIntoView: true, userEvent: "input" }));
-    return true;
-  };
+/** Per-tab parts of the editor that change with the document's format. */
+export const languageSlot = new Compartment();
+export const extrasSlot = new Compartment();
+export const wrapSlot = new Compartment();
+export const readOnlySlot = new Compartment();
+
+export interface EditorSetup {
+  language: Extension;
+  extras: Extension;
+  wrap: boolean;
+  readOnly: boolean;
 }
 
-function insertLink(view: EditorView) {
-  const { state } = view;
-  const tr = state.changeByRange((range) => {
-    const text = state.sliceDoc(range.from, range.to);
-    const insert = `[${text}]()`;
-    // Cursor goes inside the () when text is selected, otherwise inside the [].
-    const cursor = text ? range.from + insert.length - 1 : range.from + 1;
-    return {
-      changes: { from: range.from, to: range.to, insert },
-      range: EditorSelection.cursor(cursor),
-    };
-  });
-  view.dispatch(state.update(tr, { scrollIntoView: true, userEvent: "input" }));
-  return true;
-}
+export const wrapExtension = (on: boolean) => (on ? EditorView.lineWrapping : []);
+export const readOnlyExtension = (on: boolean) => (on ? [EditorState.readOnly.of(true)] : []);
 
-const formatKeymap = keymap.of([
-  { key: "Mod-b", run: toggleWrap("**") },
-  { key: "Mod-i", run: toggleWrap("*") },
-  { key: "Mod-Shift-x", run: toggleWrap("~~") },
-  { key: "Mod-e", run: toggleWrap("`") },
-  { key: "Mod-k", run: insertLink },
-]);
-
-export function editorExtensions(onUpdate: Extension): Extension[] {
+export function editorExtensions(onUpdate: Extension, setup: EditorSetup): Extension[] {
   return [
     highlightSpecialChars(),
     history(),
@@ -152,17 +116,14 @@ export function editorExtensions(onUpdate: Extension): Extension[] {
     rectangularSelection(),
     crosshairCursor(),
     highlightSelectionMatches(),
-    EditorView.lineWrapping,
+    wrapSlot.of(wrapExtension(setup.wrap)),
+    readOnlySlot.of(readOnlyExtension(setup.readOnly)),
     EditorView.contentAttributes.of({ spellcheck: "false", autocorrect: "off", autocapitalize: "off" }),
-    markdown({
-      base: markdownLanguage,
-      codeLanguages: languages,
-      extensions: { props: [styleTags({ TaskMarker: t.processingInstruction })] },
-    }),
+    languageSlot.of(setup.language),
     syntaxHighlighting(highlight),
     theme,
     placeholder("开始写作…"),
-    formatKeymap,
+    extrasSlot.of(setup.extras),
     keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, indentWithTab]),
     onUpdate,
   ];

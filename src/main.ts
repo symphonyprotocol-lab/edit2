@@ -1,14 +1,29 @@
-import { EditorState, type StateEffect, type Text } from "@codemirror/state";
+import { EditorState, EditorSelection, type Extension, type StateEffect, type Text } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { undo, redo } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
-import { editorExtensions } from "./editor";
-import { renderMarkdown, countWords } from "./preview";
-import { cachedDiagram, renderDiagram, onThemeChange } from "./mermaid";
-import { host, inTauri, isMac } from "./host";
+import {
+  editorExtensions,
+  languageSlot,
+  extrasSlot,
+  wrapSlot,
+  wrapExtension,
+} from "./editor";
+import {
+  allFormats,
+  extensionOf,
+  formatById,
+  formatFor,
+  isKnownFile,
+  type FormatPlugin,
+  type Mode,
+  type PreviewContext,
+  type PreviewRenderer,
+  type RenderResult,
+} from "./formats";
+import { host, inTauri, isMac, type DialogFilter } from "./host";
 import { TabBar } from "./tabs";
-
-type Mode = "write" | "split" | "read";
+import { showMenu, closeMenu, type MenuEntry } from "./popup";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const app = $("app");
@@ -20,6 +35,8 @@ const dirEl = $("doc-dir");
 const posEl = $("st-pos");
 const countEl = $("st-count");
 const saveEl = $("st-save");
+const formatEl = $("st-format");
+const previewErrorEl = $("preview-error");
 const toastEl = $("toast");
 
 // ---------- persisted preferences ----------
@@ -71,17 +88,91 @@ interface Tab {
   state: EditorState;
   editorScroll: StateEffect<unknown> | null;
   previewTop: number;
+  /** How the document is highlighted, previewed and counted. */
+  format: FormatPlugin;
+  /** Soft-wrap long lines. */
+  wrap: boolean;
 }
 
 const AUTOSAVE_DELAY = 800;
 
-let mode: Mode = prefs.get<Mode>("mode", "write");
+let mode: Mode = "write";
 let fontSize = prefs.get<number>("fontSize", 15);
 let draftsDir = "";
 let nextTabId = 1;
 
-function createTab(text = "", started = true): Tab {
-  const state = makeState(text);
+// ---------- formats ----------
+
+/** Formats the user picked by hand for particular files (path → format id). */
+const overrides = (): Record<string, string> => prefs.get("formatOverrides", {});
+
+/** The format a file is shown as: the user's choice, else by its extension. */
+function formatOf(path: string | null): FormatPlugin {
+  const id = path ? overrides()[path] : undefined;
+  return (id && formatById(id)) || formatFor(path);
+}
+
+function rememberOverride(path: string, format: FormatPlugin | null) {
+  const all = overrides();
+  if (format) all[path] = format.id;
+  else delete all[path];
+  prefs.set("formatOverrides", all);
+}
+
+/** Editor languages that have finished loading, by format id. */
+const languages = new Map<string, Extension>();
+const languageLoads = new Map<string, Promise<void>>();
+
+/** Kick off loading a format's language; tabs using it are updated when it lands. */
+function loadLanguage(format: FormatPlugin): Promise<void> {
+  if (!format.language || languages.has(format.id)) return Promise.resolve();
+  let load = languageLoads.get(format.id);
+  if (!load) {
+    const result = format.language();
+    if (!(result instanceof Promise)) {
+      languages.set(format.id, result);
+      return Promise.resolve();
+    }
+    load = result.then(
+      (ext) => {
+        languages.set(format.id, ext);
+        for (const tab of tabs) if (tab.format === format) reconfigure(tab);
+      },
+      () => {
+        languageLoads.delete(format.id); // try again next time
+      },
+    );
+    languageLoads.set(format.id, load);
+  }
+  return load;
+}
+
+const formatEffects = (format: FormatPlugin) => [
+  languageSlot.reconfigure(languages.get(format.id) ?? []),
+  extrasSlot.reconfigure(format.editorExtras ?? []),
+];
+
+/** Bring a tab's editor in line with its format. */
+function reconfigure(tab: Tab) {
+  const effects = formatEffects(tab.format);
+  if (tab === doc) view.dispatch({ effects });
+  else tab.state = tab.state.update({ effects }).state;
+}
+
+/** Show a tab as another format (status bar choice, or a renamed file). */
+function setFormat(tab: Tab, format: FormatPlugin) {
+  if (tab.format === format) return;
+  tab.format = format;
+  loadLanguage(format);
+  reconfigure(tab);
+  if (tab === doc) {
+    applyMode(preferredMode(format));
+    showDocument();
+  }
+}
+
+function createTab(text = "", started = true, format = formatOf(null)): Tab {
+  const state = makeState(text, format, true);
   return {
     id: nextTabId++,
     path: null,
@@ -99,13 +190,21 @@ function createTab(text = "", started = true): Tab {
     state,
     editorScroll: null,
     previewTop: 0,
+    format,
+    wrap: true,
   };
 }
 
-function makeState(text: string) {
+function makeState(text: string, format: FormatPlugin, wrap: boolean) {
+  loadLanguage(format);
   return EditorState.create({
     doc: text,
-    extensions: editorExtensions(EditorView.updateListener.of(onUpdate)),
+    extensions: editorExtensions(EditorView.updateListener.of(onUpdate), {
+      language: languages.get(format.id) ?? [],
+      extras: format.editorExtras ?? [],
+      wrap,
+      readOnly: false,
+    }),
   });
 }
 
@@ -253,6 +352,9 @@ function refreshChrome() {
     saveEl.textContent = "新文件";
   }
 
+  formatEl.textContent = doc.format.label;
+  app.classList.toggle("no-preview", !doc.format.preview);
+
   renderTabs();
   syncBackend();
 }
@@ -274,18 +376,9 @@ function scheduleCount() {
 }
 
 function updateCount() {
-  const { words, minutes } = countWords(view.state.doc.toString());
-  if (mode === "read") {
-    countEl.textContent = words ? `${words.toLocaleString()} 字 · 约 ${minutes} 分钟` : "0 字";
-    return;
-  }
   const sel = view.state.selection.main;
-  if (!sel.empty) {
-    const picked = countWords(view.state.sliceDoc(sel.from, sel.to)).words;
-    countEl.textContent = `已选 ${picked.toLocaleString()} / ${words.toLocaleString()} 字`;
-  } else {
-    countEl.textContent = `${words.toLocaleString()} 字`;
-  }
+  const picked = mode !== "read" && !sel.empty ? view.state.sliceDoc(sel.from, sel.to) : null;
+  countEl.textContent = doc.format.stats(view.state.doc.toString(), picked);
 }
 
 let toastTimer = 0;
@@ -304,8 +397,14 @@ let previewStale = true;
 let anchors: { line: number; el: HTMLElement; top: number }[] = [];
 /** Whether `anchors[].top` reflects the current layout. */
 let anchorsMeasured = false;
-/** Local image files the backend has already been asked to expose. */
+/** Local files the backend has already been asked to expose. */
 const allowedAssets = new Set<string>();
+/** Loaded preview renderers, by format id. */
+const renderers = new Map<string, PreviewRenderer>();
+/** Format whose output the preview element currently holds. */
+let previewFormat: FormatPlugin | null = null;
+/** Bumped by every render; a render finishing late compares against it. */
+let renderSeq = 0;
 
 function schedulePreview() {
   previewStale = true;
@@ -314,95 +413,142 @@ function schedulePreview() {
   previewTimer = window.setTimeout(renderPreview, view.state.doc.length > 200_000 ? 400 : 90);
 }
 
-function renderPreview() {
+/** Absolute path of a local file referenced from the document, or null. */
+function localPath(ref: string): string | null {
+  if (!ref || ref.startsWith("#") || /^[a-z][a-z0-9+.-]*:|^\/\//i.test(ref)) return null;
+  let local = ref.replace(/[?#].*$/, "");
+  try {
+    local = decodeURIComponent(local);
+  } catch {
+    /* keep raw */
+  }
+  if (!local) return null;
+  if (doc.path) return resolvePath(dirname(doc.path), local);
+  return /^([a-zA-Z]:)?[\\/]/.test(local) ? local : null;
+}
+
+async function assetUrls(paths: string[]): Promise<string[]> {
+  const fresh = [...new Set(paths)].filter((p) => !allowedAssets.has(p));
+  if (fresh.length) {
+    fresh.forEach((p) => allowedAssets.add(p));
+    await host.allowAssets(fresh).catch(() => {});
+  }
+  return paths.map((p) => host.assetUrl(p));
+}
+
+/** Follow a link clicked in the preview. */
+function openLink(href: string, scope: ParentNode = preview) {
+  if (href.startsWith("#")) {
+    const id = decodeURIComponent(href.slice(1));
+    const hit =
+      scope.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"], a[name="${CSS.escape(id)}"]`) ??
+      [...scope.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6")].find(
+        (h) => slug(h.textContent ?? "") === slug(id),
+      );
+    hit?.scrollIntoView({ block: "start", behavior: "smooth" });
+  } else if (/^(https?|mailto|tel):/i.test(href)) {
+    host.openUrl(href);
+  } else {
+    const abs = localPath(href);
+    if (!abs) return;
+    if (isKnownFile(abs)) openPath(abs);
+    else host.reveal(abs);
+  }
+}
+
+const slug = (s: string) => s.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "");
+
+function goToLine(line: number) {
+  const n = Math.min(view.state.doc.lines, Math.max(1, line + 1));
+  const at = view.state.doc.line(n).from;
+  if (mode === "read") setMode("split");
+  view.dispatch({ selection: EditorSelection.cursor(at), effects: EditorView.scrollIntoView(at, { y: "center" }) });
+  view.focus();
+}
+
+function previewContext(seq: number, tab: Tab): PreviewContext {
+  return {
+    container: preview,
+    path: tab.path,
+    localPath,
+    assetUrls,
+    openLink,
+    editSource(fn) {
+      if (doc !== tab) return;
+      const change = fn(view.state.doc);
+      if (!change) return;
+      view.dispatch({ changes: change, userEvent: "input" });
+      renderPreview();
+    },
+    goToLine,
+    layoutChanged: () => (anchorsMeasured = false),
+    isCurrent: () => seq === renderSeq && doc === tab,
+  };
+}
+
+function showPreviewError(error: RenderResult["error"]) {
+  previewErrorEl.hidden = !error;
+  if (!error) return;
+  previewErrorEl.textContent = error.line ? `第 ${error.line} 行：${error.message}` : error.message;
+  previewErrorEl.dataset.line = error.line ? String(error.line - 1) : "";
+  previewErrorEl.title = error.line ? "点击跳到这一行" : "";
+}
+
+previewErrorEl.addEventListener("click", () => {
+  const line = previewErrorEl.dataset.line;
+  if (line) goToLine(Number(line));
+});
+
+function setAnchors(list: { line: number; el: HTMLElement }[]) {
+  anchors = list.map((a) => ({ ...a, top: 0 })).sort((a, b) => a.line - b.line);
+  anchorsMeasured = false;
+}
+
+function loadRenderer(format: FormatPlugin): PreviewRenderer | Promise<PreviewRenderer> {
+  return (
+    renderers.get(format.id) ??
+    format.preview!().then((r) => {
+      renderers.set(format.id, r);
+      return r;
+    })
+  );
+}
+
+async function renderPreview() {
   clearTimeout(previewTimer);
   previewStale = false;
-  preview.innerHTML = renderMarkdown(view.state.doc.toString());
+  const seq = ++renderSeq;
+  const tab = doc;
+  const format = tab.format;
 
-  // Local images: only the exact files referenced are exposed to the webview.
-  const images: [HTMLImageElement, string][] = [];
-  for (const img of preview.querySelectorAll("img")) {
-    const src = img.getAttribute("src");
-    if (!src || /^[a-z][a-z0-9+.-]*:|^\/\//i.test(src)) continue;
-    let local: string;
-    try {
-      local = decodeURIComponent(src);
-    } catch {
-      local = src;
-    }
-    if (doc.path) images.push([img, resolvePath(dirname(doc.path), local)]);
-    else if (/^\//.test(local)) images.push([img, local]);
+  if (previewFormat !== format) {
+    if (previewFormat) renderers.get(previewFormat.id)?.reset?.();
+    previewFormat = format;
+    preview.replaceChildren();
+    preview.className = `preview fmt-${format.id}`;
+    setAnchors([]);
+    showPreviewError(null);
   }
-  if (images.length) {
-    const show = () => images.forEach(([img, path]) => (img.src = host.assetUrl(path)));
-    const fresh = [...new Set(images.map(([, path]) => path))].filter((p) => !allowedAssets.has(p));
-    if (fresh.length) {
-      fresh.forEach((p) => allowedAssets.add(p));
-      host.allowAssets(fresh).then(show, show);
-    } else {
-      show();
-    }
-  }
+  if (!format.preview) return;
 
-  renderDiagrams();
-
-  const seen = new Set<number>();
-  anchors = [];
-  anchorsMeasured = false;
-  for (const el of preview.querySelectorAll<HTMLElement>("[data-line]")) {
-    const line = Number(el.dataset.line);
-    if (seen.has(line)) continue;
-    seen.add(line);
-    anchors.push({ line, el, top: 0 });
+  try {
+    let renderer = loadRenderer(format);
+    if (renderer instanceof Promise) renderer = await renderer;
+    if (seq !== renderSeq) return;
+    let result = renderer.render(view.state.doc.toString(), previewContext(seq, tab));
+    if (result instanceof Promise) result = await result;
+    if (seq !== renderSeq) return;
+    showPreviewError(result.error);
+    // A failed parse leaves the last good output (and its anchors) on screen.
+    if (result.anchors || !result.error) setAnchors(result.anchors ?? []);
+  } catch (err) {
+    if (seq === renderSeq) showPreviewError({ message: `预览失败：${err}` });
   }
-  anchors.sort((a, b) => a.line - b.line);
 }
 
-/** Last diagram shown at each position, kept on screen while an edit re-renders. */
-let shownDiagrams: string[] = [];
-
-function renderDiagrams() {
-  const blocks = [...preview.querySelectorAll<HTMLElement>(".mermaid-block")];
-  const previous = shownDiagrams;
-  shownDiagrams = [];
-
-  blocks.forEach((block, i) => {
-    const source = block.textContent ?? "";
-    const show = (svg: string | undefined, error?: string) => {
-      let figure = block.querySelector<HTMLElement>(".mermaid-svg");
-      if (svg) {
-        if (!figure) {
-          figure = document.createElement("div");
-          figure.className = "mermaid-svg";
-          block.prepend(figure);
-        }
-        figure.innerHTML = svg;
-        shownDiagrams[i] = svg;
-      }
-      block.classList.toggle("has-diagram", !!figure);
-      block.querySelector(".mermaid-error")?.remove();
-      if (error) {
-        const note = document.createElement("div");
-        note.className = "mermaid-error";
-        note.textContent = `图表语法有误：${error}`;
-        block.append(note);
-      }
-      anchorsMeasured = false;
-    };
-
-    const ready = cachedDiagram(source);
-    if (ready) return show(ready);
-    if (previous[i]) show(previous[i]);
-    renderDiagram(source).then(
-      (svg) => block.isConnected && show(svg),
-      (err) => block.isConnected && show(undefined, String(err?.message ?? err).trim()),
-    );
-  });
-}
-
-// Diagrams are themed from the palette, so redraw them when it flips.
-onThemeChange(() => {
-  shownDiagrams = [];
+// Previews follow the palette: redraw them when it flips.
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  for (const r of renderers.values()) r.themeChanged?.();
   previewStale = true;
   if (mode !== "write") renderPreview();
 });
@@ -420,57 +566,14 @@ preview.addEventListener("load", () => (anchorsMeasured = false), true);
 window.addEventListener("resize", () => (anchorsMeasured = false));
 
 preview.addEventListener("click", (e) => {
-  const target = e.target as HTMLElement;
-
-  const box = target.closest<HTMLInputElement>("input.task-box");
-  if (box) {
-    // The source is the truth: the box only changes via a re-render.
-    e.preventDefault();
-    toggleTask(Number(box.dataset.taskLine));
-    return;
-  }
-
-  const a = target.closest("a");
+  const renderer = previewFormat && renderers.get(previewFormat.id);
+  if (renderer?.click?.(e, previewContext(renderSeq, doc))) return;
+  if (e.defaultPrevented) return;
+  const a = (e.target as HTMLElement).closest("a");
   if (!a) return;
   e.preventDefault();
-  const href = a.getAttribute("href") ?? "";
-  if (href.startsWith("#")) {
-    const id = decodeURIComponent(href.slice(1));
-    const hit =
-      document.getElementById(id) ??
-      [...preview.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6")].find(
-        (h) => slug(h.textContent ?? "") === slug(id),
-      );
-    hit?.scrollIntoView({ block: "start", behavior: "smooth" });
-  } else if (/^(https?|mailto|tel):/i.test(href)) {
-    host.openUrl(href);
-  } else if (doc.path && href) {
-    let rel = href.split("#")[0];
-    try {
-      rel = decodeURIComponent(rel);
-    } catch {
-      /* keep raw */
-    }
-    const abs = resolvePath(dirname(doc.path), rel);
-    if (/\.(md|markdown|mdown|mkd|mdx|txt)$/i.test(abs)) openPath(abs);
-    else host.reveal(abs);
-  }
+  openLink(a.getAttribute("href") ?? "");
 });
-
-const slug = (s: string) => s.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "");
-
-function toggleTask(line: number) {
-  if (line < 0 || line >= view.state.doc.lines) return;
-  const l = view.state.doc.line(line + 1);
-  const m = /^((?:\s*>)*\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])\]/.exec(l.text);
-  if (!m) return;
-  const from = l.from + m[1].length;
-  view.dispatch({
-    changes: { from, to: from + 1, insert: m[2] === " " ? "x" : " " },
-    userEvent: "input",
-  });
-  renderPreview();
-}
 
 // ---------- scroll sync (split mode) ----------
 
@@ -495,9 +598,16 @@ function editorTopLine(): number {
   return line + Math.min(1, Math.max(0, (h - block.top) / Math.max(1, block.height)));
 }
 
+/** Scroll `to` to the same relative position as `from` (previews without anchors). */
+function syncByRatio(from: HTMLElement, to: HTMLElement) {
+  const ratio = from.scrollTop / Math.max(1, from.scrollHeight - from.clientHeight);
+  to.scrollTop = ratio * (to.scrollHeight - to.clientHeight);
+}
+
 function syncPreviewFromEditor() {
-  if (mode !== "split" || !anchors.length || !claimSync("editor")) return;
+  if (mode !== "split" || !claimSync("editor")) return;
   const s = view.scrollDOM;
+  if (!anchors.length) return syncByRatio(s, previewScroll);
   if (s.scrollTop + s.clientHeight >= s.scrollHeight - 2) {
     previewScroll.scrollTop = previewScroll.scrollHeight;
     return;
@@ -520,8 +630,9 @@ function syncPreviewFromEditor() {
 }
 
 function syncEditorFromPreview() {
-  if (mode !== "split" || !anchors.length || !claimSync("preview")) return;
+  if (mode !== "split" || !claimSync("preview")) return;
   const p = previewScroll;
+  if (!anchors.length) return syncByRatio(p, view.scrollDOM);
   if (p.scrollTop + p.clientHeight >= p.scrollHeight - 2) {
     view.scrollDOM.scrollTop = view.scrollDOM.scrollHeight;
     return;
@@ -549,15 +660,36 @@ previewScroll.addEventListener("scroll", syncEditorFromPreview, { passive: true 
 
 // ---------- view modes & font size ----------
 
-function setMode(next: Mode) {
-  const line = mode === "read" ? null : editorTopLine();
+/** View last used for each format (format id → mode). */
+const modePrefs = (): Record<string, Mode> => prefs.get("modes", {});
+
+function preferredMode(format: FormatPlugin): Mode {
+  if (!format.preview) return "write";
+  // Markdown keeps the single view setting from before formats existed.
+  const legacy = format.id === "markdown" ? prefs.get<Mode | null>("mode", null) : null;
+  return modePrefs()[format.id] ?? legacy ?? format.defaultMode;
+}
+
+/** Switch the layout without remembering it as a preference. */
+function applyMode(next: Mode) {
+  if (!doc.format.preview) next = "write";
   mode = next;
   app.dataset.mode = next;
   anchorsMeasured = false;
-  prefs.set("mode", next);
   for (const b of document.querySelectorAll<HTMLButtonElement>(".seg button")) {
     b.setAttribute("aria-checked", String(b.dataset.mode === next));
+    b.disabled = !doc.format.preview && b.dataset.mode !== "write";
   }
+}
+
+function setMode(next: Mode) {
+  if (!doc.format.preview && next !== "write") {
+    toast(`${doc.format.label}没有预览`);
+    return;
+  }
+  const line = mode === "read" ? null : editorTopLine();
+  applyMode(next);
+  prefs.set("modes", { ...modePrefs(), [doc.format.id]: next });
   if (next !== "write" && previewStale) renderPreview();
   if (next !== "read") view.requestMeasure();
   updatePos();
@@ -626,6 +758,45 @@ window.addEventListener("storage", (e) => {
   if (e.key === "mdit.recent") renderRecent();
 });
 
+// ---------- status bar: format menu ----------
+
+function formatMenu(): MenuEntry[] {
+  const tab = doc;
+  const key = tab.path ?? tab.draft;
+  const byExtension = formatFor(tab.path);
+  const overridden = !!key && overrides()[key] !== undefined;
+  const entries: MenuEntry[] = [{ heading: "显示为" }];
+  for (const format of allFormats()) {
+    entries.push({
+      label: format.label,
+      checked: tab.format === format,
+      run: () => {
+        if (key) rememberOverride(key, format === byExtension && tab.path ? null : format);
+        setFormat(tab, format);
+      },
+    });
+  }
+  if (overridden && tab.path) {
+    entries.push("-", {
+      label: `按扩展名识别（${byExtension.label}）`,
+      run: () => {
+        rememberOverride(key!, null);
+        setFormat(tab, byExtension);
+      },
+    });
+  }
+  entries.push("-", { label: "自动换行", checked: tab.wrap, hint: "⌥Z", run: toggleWrap });
+  return entries;
+}
+
+formatEl.addEventListener("click", () => showMenu(formatEl, formatMenu()));
+
+function toggleWrap() {
+  doc.wrap = !doc.wrap;
+  view.dispatch({ effects: wrapSlot.reconfigure(wrapExtension(doc.wrap)) });
+  anchorsMeasured = false;
+}
+
 // ---------- tab switching ----------
 
 /** Remember where the on-screen tab was, before another one takes the view. */
@@ -637,7 +808,10 @@ function stashActive() {
 
 /** Bring the preview, status bar and focus in line with the active tab. */
 function showDocument() {
-  shownDiagrams = [];
+  closeMenu();
+  if (previewFormat) renderers.get(previewFormat.id)?.reset?.();
+  previewFormat = null; // a fresh document: start the preview from scratch
+  applyMode(preferredMode(doc.format));
   previewStale = true;
   if (mode !== "write") renderPreview();
   previewScroll.scrollTop = doc.previewTop;
@@ -744,7 +918,9 @@ async function openPath(path: string) {
     if (again) return activate(again);
 
     const draft = inDrafts(data.path);
-    const state = makeState(data.content);
+    const format = formatOf(data.path);
+    await loadLanguage(format);
+    const state = makeState(data.content, format, true);
     const fill = (tab: Tab) => {
       tab.path = draft ? null : data.path;
       tab.draft = draft ? data.path : null;
@@ -756,6 +932,8 @@ async function openPath(path: string) {
       tab.missing = tab.dirty = tab.failed = false;
       tab.editorScroll = null;
       tab.previewTop = 0;
+      tab.format = format;
+      tab.wrap = true;
     };
 
     if (isPristine()) {
@@ -774,8 +952,18 @@ async function openPath(path: string) {
   }
 }
 
+/** Dialog filters: every supported format first (the default), then each one. */
+function dialogFilters(first?: FormatPlugin): DialogFilter[] {
+  const formats = [...allFormats()].sort((a, b) => (a === first ? -1 : b === first ? 1 : 0));
+  const each = formats.map((f) => ({ name: f.label, extensions: f.extensions }));
+  if (first) return each;
+  return [{ name: "所有支持的文件", extensions: formats.flatMap((f) => f.extensions) }, ...each];
+}
+
 async function openViaDialog() {
-  const path = await host.pickFile();
+  // macOS merges filters into one allow-list (no "all files" choice), which
+  // would hide text files without a known extension: offer every file there.
+  const path = await host.pickFile(isMac ? [] : [...dialogFilters(), { name: "所有文件", extensions: ["*"] }]);
   if (path) await openPath(path);
 }
 
@@ -863,16 +1051,17 @@ async function autosave(tab: Tab): Promise<boolean> {
 
 function suggestName(tab: Tab) {
   const name = tabName(tab).replace(/[\\/:*?"<>|#…]+/g, " ").trim().slice(0, 60);
-  return `${name || "未命名"}.md`;
+  return `${name || "未命名"}.${tab.format.extensions[0] ?? "txt"}`;
 }
 
 /** Explicit save (⌘S / ⇧⌘S). A draft becomes a real file and leaves staging. */
 async function save(as = false): Promise<boolean> {
   const tab = doc;
+  const before = tab.path ?? tab.draft ?? "";
   clearTimeout(tab.autosaveTimer);
   let target = tab.path;
   if (!target || as) {
-    target = await host.pickSavePath(tab.path ?? suggestName(tab));
+    target = await host.pickSavePath(tab.path ?? suggestName(tab), dialogFilters(tab.format));
     if (!target) return false;
   }
   let written;
@@ -894,7 +1083,10 @@ async function save(as = false): Promise<boolean> {
   refreshChrome();
   if (renamed) {
     toast(`已保存为 ${basename(written.path)}`);
-    if (tab === doc && mode !== "write") renderPreview(); // relative image paths may now resolve
+    // A new extension may mean another format; otherwise relative paths may now resolve.
+    const format = extensionOf(written.path) === extensionOf(before) ? tab.format : formatOf(written.path);
+    if (format !== tab.format) setFormat(tab, format);
+    else if (tab === doc && mode !== "write") renderPreview();
   }
   return true;
 }
@@ -1006,6 +1198,7 @@ const commands: Record<string, () => unknown> = {
   zoom_in: () => applyFont(fontSize + 1),
   zoom_out: () => applyFont(fontSize - 1),
   zoom_reset: () => applyFont(15),
+  toggle_wrap: () => doc.started && toggleWrap(),
 };
 
 // On macOS the native menu owns these shortcuts; elsewhere we handle them here.
@@ -1021,6 +1214,11 @@ window.addEventListener(
       return;
     }
     const mod = isMac ? e.metaKey : e.ctrlKey;
+    if (handleShortcutsInPage && e.altKey && !mod && !e.shiftKey && e.code === "KeyZ") {
+      e.preventDefault();
+      commands.toggle_wrap();
+      return;
+    }
     if (mod && handleShortcutsInPage && !e.altKey) {
       const k = e.key.toLowerCase();
       const id = e.shiftKey
@@ -1071,7 +1269,7 @@ setInterval(() => document.hasFocus() && checkDisk(), 2500);
 async function boot() {
   app.classList.add(isMac && inTauri ? "platform-mac" : "platform-other");
   applyFont(fontSize);
-  setMode(mode);
+  applyMode(preferredMode(doc.format));
   renderRecent();
   refreshChrome();
 
@@ -1103,3 +1301,6 @@ async function boot() {
 }
 
 boot();
+
+// Dev only, in a plain browser: open files from the console, e.g. edit2.open("/abs/path.json").
+if (import.meta.env.DEV && !inTauri) Object.assign(window, { edit2: { open: openPath } });

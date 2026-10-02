@@ -48,7 +48,8 @@
 
         <div class="pane editor-pane" id="editor"></div>
         <div class="pane preview-pane" id="preview-scroll">
-          <article class="md" id="preview"></article>
+          <div class="preview-error" id="preview-error" role="alert" hidden></div>
+          <article class="preview" id="preview"></article>
         </div>
       </main>
 
@@ -57,7 +58,7 @@
         <span id="st-count"></span>
         <span class="spacer"></span>
         <span id="st-save"></span>
-        <span>Markdown</span>
+        <button type="button" class="st-btn" id="st-format" aria-haspopup="menu" aria-expanded="false" title="文件格式"></button>
       </footer>
 
       <div class="drop-overlay" aria-hidden="true"><span>松开以打开</span></div>
