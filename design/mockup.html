@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>mdit 版式设计</title>
+<style>
+  :root {
+    --bg: #faf9f6;
+    --ink: #1c1b19;
+    --ink-2: #5e5a54;
+    --ink-3: #9a958d;
+    --line: #e7e4de;
+    --hover: #f0eee9;
+    --accent: #b5532c;
+    --code-bg: #f3f1ec;
+    --page: #ecebe7;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, "PingFang SC", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .dark {
+    --bg: #1a1917;
+    --ink: #e8e6e1;
+    --ink-2: #a29e97;
+    --ink-3: #6f6b65;
+    --line: #2e2c29;
+    --hover: #252321;
+    --accent: #e07a4f;
+    --code-bg: #232120;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); font-family: var(--sans); color: #1c1b19; }
+  header.doc { max-width: 1120px; margin: 48px auto 8px; padding: 0 24px; }
+  header.doc h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  header.doc p { margin: 0; color: #5e5a54; line-height: 1.6; max-width: 70ch; }
+  section.frame { max-width: 1120px; margin: 40px auto; padding: 0 24px; }
+  section.frame > h2 { font-size: 15px; margin: 0 0 4px; }
+  section.frame > p { margin: 0 0 14px; color: #5e5a54; font-size: 14px; line-height: 1.6; }
+
+  /* ---------- window ---------- */
+  .win {
+    background: var(--bg); color: var(--ink);
+    border-radius: 11px; overflow: hidden;
+    box-shadow: 0 0 0 0.5px rgba(0,0,0,.25), 0 22px 60px rgba(0,0,0,.18);
+    height: 520px; display: flex; flex-direction: column;
+  }
+  .titlebar {
+    height: 38px; flex: none; display: grid;
+    grid-template-columns: 1fr auto 1fr; align-items: center;
+    padding: 0 12px; border-bottom: 1px solid transparent;
+  }
+  .titlebar.ruled { border-bottom-color: var(--line); }
+  .lights { display: flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1) { background: #ff5f57; }
+  .lights i:nth-child(2) { background: #febc2e; }
+  .lights i:nth-child(3) { background: #28c840; }
+  .title { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .title .dir { color: var(--ink-3); font-weight: 400; }
+  .dirty { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .seg { justify-self: end; display: flex; background: var(--hover); border-radius: 7px; padding: 2px; }
+  .seg span { font-size: 12px; padding: 3px 10px; border-radius: 5px; color: var(--ink-2); }
+  .seg span.on { background: var(--bg); color: var(--ink); box-shadow: 0 0 0 0.5px var(--line), 0 1px 2px rgba(0,0,0,.06); }
+
+  .body { flex: 1; min-height: 0; display: flex; }
+  .pane { flex: 1; overflow: hidden; padding: 28px 0; }
+  .pane + .pane { border-left: 1px solid var(--line); }
+  .col { max-width: 640px; margin: 0 auto; padding: 0 40px; }
+
+  /* editor look */
+  .ed { font-family: var(--mono); font-size: 14px; line-height: 1.75; white-space: pre-wrap; }
+  .ed .h { font-weight: 700; }
+  .ed .h1 { font-size: 20px; }
+  .ed .h2 { font-size: 17px; }
+  .ed .m { color: var(--ink-3); font-weight: 400; }
+  .ed .em { font-style: italic; }
+  .ed .st { font-weight: 700; }
+  .ed .ln { color: var(--accent); }
+  .ed .cd { background: var(--code-bg); border-radius: 3px; }
+  .ed .q { color: var(--ink-2); }
+  .ed .cur { display: inline-block; width: 2px; height: 1.2em; background: var(--accent); vertical-align: -3px; }
+
+  /* preview look */
+  .pv { font-size: 15px; line-height: 1.75; }
+  .pv h1 { font-size: 26px; margin: 0 0 14px; letter-spacing: -0.01em; }
+  .pv h2 { font-size: 19px; margin: 22px 0 8px; }
+  .pv p { margin: 0 0 12px; }
+  .pv a { color: var(--accent); text-decoration: none; border-bottom: 1px solid currentColor; }
+  .pv code { font-family: var(--mono); font-size: .88em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .pv blockquote { margin: 0 0 12px; padding-left: 14px; border-left: 3px solid var(--line); color: var(--ink-2); }
+  .pv ul { padding-left: 1.3em; margin: 0 0 12px; }
+  .pv li.task { list-style: none; margin-left: -1.3em; }
+  .pv li.task input { accent-color: var(--accent); margin-right: 6px; }
+
+  .status {
+    height: 26px; flex: none; display: flex; align-items: center; gap: 14px;
+    padding: 0 14px; font-size: 11.5px; color: var(--ink-3); border-top: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+  }
+  .status .sp { flex: 1; }
+  .status .ok::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #5a9a5a; margin-right: 6px; vertical-align: 1px; }
+
+  /* empty state */
+  .empty { flex: 1; display: grid; place-items: center; }
+  .empty .box { width: 340px; text-align: center; }
+  .mark { font-family: var(--mono); font-size: 30px; font-weight: 700; letter-spacing: -0.03em; }
+  .mark b { color: var(--accent); }
+  .empty .tag { color: var(--ink-3); font-size: 13px; margin: 6px 0 26px; }
+  .btns { display: flex; gap: 10px; justify-content: center; }
+  .btn { font-size: 13px; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); display: inline-flex; gap: 10px; align-items: center; }
+  .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .btn kbd { font-family: var(--sans); font-size: 11px; opacity: .55; }
+  .recent { margin-top: 30px; text-align: left; }
+  .recent h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); margin: 0 0 6px 10px; font-weight: 600; }
+  .recent div { display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+  .recent div:first-of-type { background: var(--hover); }
+  .recent span { color: var(--ink-3); font-size: 12px; }
+  .drop { margin-top: 22px; font-size: 12px; color: var(--ink-3); }
+
+  /* annotations */
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
+  .note { background: #fff; border-radius: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.6; color: #3d3a36; }
+  .note b { display: block; margin-bottom: 2px; color: #1c1b19; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .sw { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; }
+  .sw i { width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
+</style>
+</head>
+<body>
+<header class="doc">
+  <h1>mdit · 单文件 Markdown 编辑器</h1>
+  <p>原则：打开即写，写完即走。一个窗口只对应一个文件，没有侧栏、没有目录树、没有标签页。界面只有三层：标题栏（文件名 + 视图切换）、正文、状态栏。所有操作都有快捷键，鼠标可选。</p>
+</header>
+
+<section class="frame">
+  <h2>① 启动态（未打开文件）</h2>
+  <p>不弹系统对话框，给出三条路：新建、打开、拖入。下方只列最近 5 个文件，方便“回到刚才那份笔记”。</p>
+  <div class="win">
+    <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><div></div><div></div></div>
+    <div class="empty"><div class="box">
+      <div class="mark">md<b>it</b></div>
+      <div class="tag">一次只编辑一个 Markdown 文件</div>
+      <div class="btns"><span class="btn primary">新建 <kbd>⌘N</kbd></span><span class="btn">打开… <kbd>⌘O</kbd></span></div>
+      <div class="recent">
+        <h4>最近</h4>
+        <div>weekly-notes.md <span>~/Documents</span></div>
+        <div>README.md <span>~/git/mdit</span></div>
+        <div>todo.md <span>~/Desktop</span></div>
+      </div>
+      <div class="drop">或者把 .md 文件拖到窗口任意位置</div>
+    </div></div>
+  </div>
+</section>
+
+<section class="frame">
+  <h2>② 写作模式（默认）</h2>
+  <p>编辑器居中，最大行宽 ~72 字符。Markdown 语法高亮但标记符号变淡，标题加粗放大，读起来接近成稿。标题栏的圆点表示未保存。</p>
+  <div class="win">
+    <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div>
+      <div class="title"><span class="dirty"></span>weekly-notes.md <span class="dir">— Documents</span></div>
+      <div class="seg"><span class="on">写作</span><span>分栏</span><span>阅读</span></div></div>
+    <div class="body"><div class="pane"><div class="col ed"><span class="h h1"><span class="m"># </span>本周笔记</span>
+
+<span class="m">&gt; </span><span class="q">先把事情写下来，再决定要不要做。</span>
+
+<span class="h h2"><span class="m">## </span>进展</span>
+
+<span class="m">- [x] </span>完成 <span class="cd">`mdit`</span> 的版式设计
+<span class="m">- [ ] </span>实现<span class="st"><span class="m">**</span>保存与外部修改检测<span class="m">**</span></span>
+<span class="m">- [ ] </span>参考 <span class="ln"><span class="m">[</span>Tauri 文档<span class="m">](https://tauri.app)</span></span>
+
+这周的重点是<span class="em"><span class="m">_</span>少做一点<span class="m">_</span></span>，但做完整。<span class="cur"></span></div></div></div>
+    <div class="status"><span>Ln 11, Col 18</span><span>142 字</span><span class="sp"></span><span>未保存</span><span>Markdown</span></div>
+  </div>
+</section>
+
+<section class="frame">
+  <h2>③ 分栏模式</h2>
+  <p>左写右看，两侧按比例同步滚动。宽度不足 760px 时自动退回写作模式。</p>
+  <div class="win">
+    <div class="titlebar ruled"><div class="lights"><i></i><i></i><i></i></div>
+      <div class="title">weekly-notes.md <span class="dir">— Documents</span></div>
+      <div class="seg"><span>写作</span><span class="on">分栏</span><span>阅读</span></div></div>
+    <div class="body">
+      <div class="pane"><div class="col ed" style="padding:0 28px"><span class="h h1"><span class="m"># </span>本周笔记</span>
+
+<span class="m">&gt; </span><span class="q">先把事情写下来，再决定要不要做。</span>
+
+<span class="h h2"><span class="m">## </span>进展</span>
+
+<span class="m">- [x] </span>完成 <span class="cd">`mdit`</span> 的版式设计
+<span class="m">- [ ] </span>实现<span class="st"><span class="m">**</span>保存与外部修改检测<span class="m">**</span></span>
+<span class="m">- [ ] </span>参考 <span class="ln"><span class="m">[</span>Tauri 文档<span class="m">](https://tauri.app)</span></span></div></div>
+      <div class="pane"><div class="col pv" style="padding:0 28px">
+        <h1>本周笔记</h1>
+        <blockquote>先把事情写下来，再决定要不要做。</blockquote>
+        <h2>进展</h2>
+        <ul><li class="task"><input type="checkbox" checked>完成 <code>mdit</code> 的版式设计</li>
+        <li class="task"><input type="checkbox">实现<strong>保存与外部修改检测</strong></li>
+        <li class="task"><input type="checkbox">参考 <a>Tauri 文档</a></li></ul>
+      </div></div>
+    </div>
+    <div class="status"><span>Ln 9, Col 4</span><span>142 字</span><span class="sp"></span><span class="ok">已保存</span><span>Markdown</span></div>
+  </div>
+</section>
+
+<section class="frame">
+  <h2>④ 阅读模式 · 深色</h2>
+  <p>只渲染，不可编辑；链接在系统浏览器中打开。颜色跟随系统外观。</p>
+  <div class="win dark">
+    <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div>
+      <div class="title">weekly-notes.md <span class="dir">— Documents</span></div>
+      <div class="seg"><span>写作</span><span>分栏</span><span class="on">阅读</span></div></div>
+    <div class="body"><div class="pane"><div class="col pv">
+      <h1>本周笔记</h1>
+      <blockquote>先把事情写下来，再决定要不要做。</blockquote>
+      <h2>进展</h2>
+      <ul><li class="task"><input type="checkbox" checked>完成 <code>mdit</code> 的版式设计</li>
+      <li class="task"><input type="checkbox">实现<strong>保存与外部修改检测</strong></li>
+      <li class="task"><input type="checkbox">参考 <a>Tauri 文档</a></li></ul>
+      <p>这周的重点是<em>少做一点</em>，但做完整。</p>
+    </div></div></div>
+    <div class="status"><span>142 字 · 约 1 分钟</span><span class="sp"></span><span class="ok">已保存</span><span>Markdown</span></div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><b>快捷键</b>⌘N 新建 · ⌘O 打开 · ⌘S 保存 · ⇧⌘S 另存为 · ⌘1/2/3 切换视图 · ⌘\ 写作↔分栏 · ⌘W 关闭</div>
+    <div class="note"><b>文件行为</b>系统“打开方式”/拖入/命令行参数均可打开；窗口重新获得焦点时检查磁盘修改，未改动则静默重载，否则询问。关闭前提示未保存内容。</div>
+    <div class="note"><b>色彩</b>纸色底 + 墨色字，唯一强调色为锈橙（未保存圆点、光标、链接）。
+      <div class="swatches"><span class="sw"><i style="background:#faf9f6"></i>bg</span><span class="sw"><i style="background:#1c1b19"></i>ink</span><span class="sw"><i style="background:#9a958d"></i>muted</span><span class="sw"><i style="background:#b5532c"></i>accent</span></div></div>
+  </div>
+</section>
+</body>
+</html>
