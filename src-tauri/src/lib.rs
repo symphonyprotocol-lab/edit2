@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
@@ -13,19 +13,17 @@ mod mac_quit;
 #[cfg(target_os = "macos")]
 mod menu;
 
-/// What the backend knows about each editor window. One window edits one file.
+/// What the backend knows about each editor window. A window has one tab per file.
 #[derive(Default)]
 struct WinInfo {
     /// Frontend has finished booting and can receive `open-path` events.
     ready: bool,
-    /// Window holds an untouched, untitled document and may be reused.
-    pristine: bool,
-    /// Window has changes that are not on disk.
+    /// Some tab has changes that are not on disk.
     unsaved: bool,
-    /// File currently shown in the window.
-    path: Option<String>,
-    /// File to load once the frontend is ready.
-    pending: Option<String>,
+    /// Files open in the window's tabs (reopened if the page reloads).
+    paths: Vec<String>,
+    /// Files to open once the frontend is ready.
+    pending: Vec<String>,
 }
 
 #[derive(Default)]
@@ -34,10 +32,52 @@ struct AppState {
     counter: AtomicU32,
     /// Most recently focused window, for menu commands while none has focus.
     last_focused: Mutex<Option<String>>,
+    /// Staged drafts have been handed to a window for restoring.
+    drafts_restored: AtomicBool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InitData {
+    /// Files to open as tabs, in order.
+    files: Vec<String>,
+    /// Staging area for untitled documents.
+    drafts_dir: String,
+}
+
+#[derive(Serialize)]
+struct Written {
+    /// Canonical path of the file that was written.
+    path: String,
+    mtime: Option<u64>,
+}
+
+/// Untitled documents are auto-saved here until the user saves them for real.
+fn drafts_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("drafts");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::canonicalize(&dir).map_err(|e| e.to_string())
+}
+
+/// Staged drafts, oldest first.
+fn staged_drafts(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut drafts: Vec<(u64, String)> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "md") && p.is_file())
+        .map(|p| (mtime_of(&p).unwrap_or(0), p.to_string_lossy().into_owned()))
+        .collect();
+    drafts.sort();
+    drafts.into_iter().map(|(_, p)| p).collect()
 }
 
 #[derive(Serialize)]
 struct FileData {
+    /// Canonical path, so the frontend can tell two spellings of one file apart.
+    path: String,
     content: String,
     mtime: Option<u64>,
 }
@@ -53,7 +93,7 @@ fn normalize(path: &str) -> String {
         .unwrap_or_else(|_| path.to_string())
 }
 
-fn create_window(app: &AppHandle, pending: Option<String>) -> tauri::Result<WebviewWindow> {
+fn create_window(app: &AppHandle, pending: Vec<String>) -> tauri::Result<WebviewWindow> {
     let state = app.state::<AppState>();
     let n = state.counter.fetch_add(1, Ordering::SeqCst);
     let label = if n == 0 { "main".to_string() } else { format!("doc-{n}") };
@@ -61,11 +101,8 @@ fn create_window(app: &AppHandle, pending: Option<String>) -> tauri::Result<Webv
     state.wins.lock().unwrap().insert(
         label.clone(),
         WinInfo {
-            ready: false,
-            pristine: pending.is_none(),
-            unsaved: false,
-            path: pending.clone(),
             pending,
+            ..Default::default()
         },
     );
 
@@ -101,47 +138,26 @@ fn create_window(app: &AppHandle, pending: Option<String>) -> tauri::Result<Webv
     builder.build()
 }
 
-/// Send `path` to a window: focus it if already open, reuse a pristine window,
-/// or open a new one.
-fn route_path(app: &AppHandle, path: &str, prefer: Option<&str>) {
+/// Open `path` as a tab: in the window that already has it, else the front
+/// window (whose frontend reuses an empty tab or adds one), else a new window.
+fn route_path(app: &AppHandle, path: &str) {
     let path = normalize(path);
-    let state = app.state::<AppState>();
+    let front = front_window(app).map(|w| w.label().to_string());
     let target = {
+        let state = app.state::<AppState>();
         let mut wins = state.wins.lock().unwrap();
-
-        if let Some(label) = wins
+        let label = wins
             .iter()
-            .find(|(_, w)| w.path.as_deref() == Some(path.as_str()))
+            .find(|(_, w)| w.paths.contains(&path))
             .map(|(l, _)| l.clone())
-        {
-            drop(wins);
-            if let Some(w) = app.get_webview_window(&label) {
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
-            return;
-        }
-
-        let reusable = |w: &WinInfo| w.pristine && w.pending.is_none();
-        let label = prefer
-            .filter(|l| wins.get(*l).is_some_and(reusable))
-            .map(str::to_string)
-            .or_else(|| {
-                wins.iter()
-                    .find(|(_, w)| reusable(w))
-                    .map(|(l, _)| l.clone())
-            });
-
+            .or(front.filter(|l| wins.contains_key(l)))
+            .or_else(|| wins.keys().next().cloned());
         label.map(|label| {
             let info = wins.get_mut(&label).unwrap();
-            info.pristine = false;
-            info.path = Some(path.clone());
-            if info.ready {
-                (label, true)
-            } else {
-                info.pending = Some(path.clone());
-                (label, false)
+            if !info.ready {
+                info.pending.push(path.clone());
             }
+            (label, info.ready)
         })
     };
 
@@ -151,11 +167,25 @@ fn route_path(app: &AppHandle, path: &str, prefer: Option<&str>) {
                 let _ = app.emit_to(label.as_str(), "open-path", &path);
             }
             if let Some(w) = app.get_webview_window(&label) {
+                let _ = w.unminimize();
                 let _ = w.set_focus();
             }
         }
         None => {
-            let _ = create_window(app, Some(path));
+            let _ = create_window(app, vec![path]);
+        }
+    }
+}
+
+/// Bring a window forward, or open one if there is none.
+fn show_some_window(app: &AppHandle) {
+    match front_window(app).or_else(|| app.webview_windows().into_values().next()) {
+        Some(w) => {
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+        None => {
+            let _ = create_window(app, Vec::new());
         }
     }
 }
@@ -174,10 +204,9 @@ fn has_unsaved(app: &AppHandle) -> bool {
     wins.values().any(|w| w.unsaved)
 }
 
-/// The window menu commands should act on: the focused one, else the last one
-/// that had focus (e.g. while the About panel is key).
-#[cfg(target_os = "macos")]
-fn command_target(app: &AppHandle) -> Option<WebviewWindow> {
+/// The window commands and opened files go to: the focused one, else the last
+/// one that had focus (e.g. while the About panel is key).
+fn front_window(app: &AppHandle) -> Option<WebviewWindow> {
     let windows = app.webview_windows();
     if let Some(w) = windows.values().find(|w| w.is_focused().unwrap_or(false)) {
         return Some(w.clone());
@@ -235,40 +264,58 @@ fn file_args(args: impl Iterator<Item = String>, cwd: Option<&Path>) -> Vec<Stri
 
 // ---------- commands ----------
 
-/// Called by a window whenever its frontend boots. Returns the file it should
-/// show: one queued for it, or the one it had before the page was reloaded.
+/// Called by a window whenever its frontend boots. Returns the files it should
+/// open: staged drafts (first window of the process only), then those queued
+/// for it, or the tabs it had before the page was reloaded.
 #[tauri::command]
-fn init_window(window: WebviewWindow, state: tauri::State<'_, AppState>) -> Option<String> {
+fn init_window(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<InitData, String> {
+    let dir = drafts_dir(&app)?;
+    let mut files = if state.drafts_restored.swap(true, Ordering::SeqCst) {
+        Vec::new()
+    } else {
+        staged_drafts(&dir)
+    };
+
     let mut wins = state.wins.lock().unwrap();
     let info = wins.entry(window.label().to_string()).or_default();
     info.ready = true;
-    info.pending.take().or_else(|| info.path.clone())
+    let pending = std::mem::take(&mut info.pending);
+    files.extend(if pending.is_empty() { info.paths.clone() } else { pending });
+    files.dedup();
+    Ok(InitData {
+        files,
+        drafts_dir: dir.to_string_lossy().into_owned(),
+    })
+}
+
+/// Remove a staged draft once it has been saved for real or discarded.
+/// Refuses anything outside the staging area.
+#[tauri::command]
+fn delete_draft(app: AppHandle, path: String) -> Result<(), String> {
+    let dir = drafts_dir(&app)?;
+    let p = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+    if p.parent() != Some(dir.as_path()) {
+        return Err("只能删除暂存区中的草稿".into());
+    }
+    std::fs::remove_file(p).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn report_state(
     window: WebviewWindow,
     state: tauri::State<'_, AppState>,
-    path: Option<String>,
-    pristine: bool,
+    paths: Vec<String>,
     unsaved: bool,
 ) {
     let mut wins = state.wins.lock().unwrap();
     if let Some(info) = wins.get_mut(window.label()) {
-        info.path = path.map(|p| normalize(&p));
-        info.pristine = pristine;
+        info.paths = paths.iter().map(|p| normalize(p)).collect();
         info.unsaved = unsaved;
     }
-}
-
-#[tauri::command]
-async fn open_path(app: AppHandle, window: WebviewWindow, path: String) {
-    route_path(&app, &path, Some(window.label()));
-}
-
-#[tauri::command]
-async fn new_window(app: AppHandle) -> Result<(), String> {
-    create_window(&app, None).map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -281,16 +328,20 @@ fn read_file(path: String) -> Result<FileData, String> {
         content.remove(0);
     }
     Ok(FileData {
+        path: normalize(&path),
         content,
         mtime: mtime_of(p),
     })
 }
 
 #[tauri::command]
-fn write_file(path: String, content: String) -> Result<Option<u64>, String> {
+fn write_file(path: String, content: String) -> Result<Written, String> {
     let p = Path::new(&path);
     write_atomic(p, content.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(mtime_of(p))
+    Ok(Written {
+        path: normalize(&path),
+        mtime: mtime_of(p),
+    })
 }
 
 /// Let the preview load the local images a document references, and nothing else.
@@ -332,10 +383,10 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let files = file_args(argv.into_iter().skip(1), Some(Path::new(&cwd)));
             if files.is_empty() {
-                let _ = create_window(app, None);
+                show_some_window(app);
             }
             for f in files {
-                route_path(app, &f, None);
+                route_path(app, &f);
             }
         }));
     }
@@ -347,10 +398,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             init_window,
             report_state,
-            open_path,
-            new_window,
             read_file,
             write_file,
+            delete_draft,
             allow_assets,
             file_mtime,
             quit
@@ -363,20 +413,15 @@ pub fn run() {
             }
 
             let handle = app.handle().clone();
-            let mut files = file_args(std::env::args().skip(1), std::env::current_dir().ok().as_deref());
-            match files.len() {
+            let files = file_args(std::env::args().skip(1), std::env::current_dir().ok().as_deref());
+            if !files.is_empty() {
+                for f in files {
+                    route_path(&handle, &f);
+                }
+            } else if handle.webview_windows().is_empty() {
                 // On macOS a Finder "Open With" can arrive (as RunEvent::Opened)
                 // before setup and has then already created the window.
-                0 if !handle.webview_windows().is_empty() => {}
-                0 => {
-                    create_window(&handle, None)?;
-                }
-                _ => {
-                    create_window(&handle, Some(normalize(&files.remove(0))))?;
-                    for f in files {
-                        route_path(&handle, &f, None);
-                    }
-                }
+                create_window(&handle, Vec::new())?;
             }
             Ok(())
         })
@@ -411,7 +456,7 @@ pub fn run() {
                 tauri::RunEvent::Opened { urls } => {
                     for url in urls {
                         if let Ok(path) = url.to_file_path() {
-                            route_path(app, &path.to_string_lossy(), None);
+                            route_path(app, &path.to_string_lossy());
                         }
                     }
                 }
@@ -420,7 +465,7 @@ pub fn run() {
                     has_visible_windows: false,
                     ..
                 } => {
-                    let _ = create_window(app, None);
+                    let _ = create_window(app, Vec::new());
                 }
                 _ => {}
             }

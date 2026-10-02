@@ -13,30 +13,46 @@ export const inTauri = "__TAURI_INTERNALS__" in window;
 export const isMac = /Mac/i.test(navigator.userAgent);
 
 export interface FileData {
+  /** Canonical path of the file that was read. */
+  path: string;
   content: string;
+  mtime: number | null;
+}
+
+export interface InitData {
+  /** Files to open as tabs, in order (restored drafts first). */
+  files: string[];
+  /** Staging area where untitled documents are auto-saved. */
+  draftsDir: string;
+}
+
+export interface Written {
+  /** Canonical path of the file that was written. */
+  path: string;
   mtime: number | null;
 }
 
 const MD_FILTER = [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "mkd", "mdx", "txt"] }];
 
 export const host = {
-  initWindow: (): Promise<string | null> => (inTauri ? invoke("init_window") : Promise.resolve(null)),
+  /** What this window should open as tabs when it boots. */
+  initWindow: (): Promise<InitData> =>
+    inTauri ? invoke("init_window") : Promise.resolve({ files: [], draftsDir: "/drafts" }),
 
-  reportState: (path: string | null, pristine: boolean, unsaved: boolean): Promise<void> =>
-    inTauri ? invoke("report_state", { path, pristine, unsaved }) : Promise.resolve(),
+  reportState: (paths: string[], unsaved: boolean): Promise<void> =>
+    inTauri ? invoke("report_state", { paths, unsaved }) : Promise.resolve(),
 
   allowAssets: (paths: string[]): Promise<void> =>
     inTauri ? invoke("allow_assets", { paths }) : Promise.resolve(),
 
-  openPath: (path: string) => (inTauri ? invoke("open_path", { path }) : Promise.resolve()),
-
-  newWindow: () => (inTauri ? invoke("new_window") : Promise.resolve()),
-
   readFile: (path: string): Promise<FileData> =>
     inTauri ? invoke("read_file", { path }) : Promise.reject(new Error("需要在 Tauri 中运行")),
 
-  writeFile: (path: string, content: string): Promise<number | null> =>
-    inTauri ? invoke("write_file", { path, content }) : Promise.resolve(null),
+  writeFile: (path: string, content: string): Promise<Written> =>
+    inTauri ? invoke("write_file", { path, content }) : Promise.resolve({ path, mtime: null }),
+
+  deleteDraft: (path: string): Promise<void> =>
+    inTauri ? invoke("delete_draft", { path }) : Promise.resolve(),
 
   fileMtime: (path: string): Promise<number | null> =>
     inTauri ? invoke("file_mtime", { path }) : Promise.resolve(null),
@@ -64,6 +80,19 @@ export const host = {
     });
     if (r === "保存" || r === "Yes") return "save";
     if (r === "不保存" || r === "No") return "discard";
+    return "cancel";
+  },
+
+  /** Closing a draft tab: keep it as a real file, or throw it away. */
+  async confirmDraft(name: string): Promise<"save" | "discard" | "cancel"> {
+    if (!inTauri) return confirm(`删除草稿“${name}”？`) ? "discard" : "cancel";
+    const r = await message("草稿目前只保存在暂存区。删除后无法恢复。", {
+      title: `要将“${name}”保存为文件吗？`,
+      kind: "warning",
+      buttons: { yes: "保存…", no: "删除草稿", cancel: "取消" },
+    });
+    if (r === "保存…" || r === "Yes") return "save";
+    if (r === "删除草稿" || r === "No") return "discard";
     return "cancel";
   },
 

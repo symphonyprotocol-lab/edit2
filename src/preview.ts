@@ -39,6 +39,22 @@ const taskLists: PluginSimple = (md) => {
   });
 };
 
+/**
+ * ```mermaid blocks become placeholders holding their source; the preview
+ * swaps in the rendered diagram afterwards (see mermaid.ts).
+ */
+const mermaidBlocks: PluginSimple = (md) => {
+  const fence = md.renderer.rules.fence!;
+  md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    if (token.info.trim().split(/\s+/)[0].toLowerCase() !== "mermaid") {
+      return fence(tokens, idx, options, env, self);
+    }
+    const line = token.map ? ` data-line="${token.map[0]}"` : "";
+    return `<div class="mermaid-block"${line}><pre class="mermaid-source"><code>${md.utils.escapeHtml(token.content)}</code></pre></div>\n`;
+  };
+};
+
 const md = new MarkdownIt({
   html: true,
   linkify: true,
@@ -55,7 +71,8 @@ const md = new MarkdownIt({
   },
 })
   .use(sourceLines)
-  .use(taskLists);
+  .use(taskLists)
+  .use(mermaidBlocks);
 
 export function renderMarkdown(source: string): string {
   return DOMPurify.sanitize(md.render(source), {

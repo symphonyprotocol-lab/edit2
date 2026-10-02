@@ -33,6 +33,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         true,
         &[
             &item("new", "新建", "CmdOrCtrl+N")?,
+            &item("new_tab", "新建标签页", "CmdOrCtrl+T")?,
             &item("open", "打开…", "CmdOrCtrl+O")?,
             &sep()?,
             &item("save", "保存", "CmdOrCtrl+S")?,
@@ -40,7 +41,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             &sep()?,
             &item("reveal", "在访达中显示", "CmdOrCtrl+Shift+R")?,
             &sep()?,
-            &item("close", "关闭窗口", "CmdOrCtrl+W")?,
+            &item("close", "关闭标签页", "CmdOrCtrl+W")?,
+            &item("close_window", "关闭窗口", "CmdOrCtrl+Shift+W")?,
         ],
     )?;
 
@@ -86,6 +88,9 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         &[
             &PredefinedMenuItem::minimize(app, Some("最小化"))?,
             &PredefinedMenuItem::maximize(app, Some("缩放"))?,
+            &sep()?,
+            &item("prev_tab", "显示上一个标签页", "CmdOrCtrl+Shift+[")?,
+            &item("next_tab", "显示下一个标签页", "CmdOrCtrl+Shift+]")?,
         ],
     )?;
 
@@ -101,12 +106,12 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             crate::close_all(app);
             return;
         }
-        match crate::command_target(app) {
+        match crate::front_window(app) {
             Some(w) => {
                 let _ = app.emit_to(w.label(), "menu", id);
             }
-            None if id == "new" || id == "open" => {
-                let _ = crate::create_window(app, None);
+            None if matches!(id, "new" | "new_tab" | "open") => {
+                let _ = crate::create_window(app, Vec::new());
             }
             None => {}
         }
