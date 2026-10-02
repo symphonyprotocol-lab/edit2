@@ -13,6 +13,6 @@ export const html: FormatPlugin = {
   preview: () => import("./preview").then((m) => m.htmlPreview),
   formatter: () => import("./format").then((m) => m.htmlFormatter),
   canFormat: true,
-  stats: (text, selection) => wordStats(visibleText(text), selection && visibleText(selection)),
+  stats: (text, selection, reading) => wordStats(visibleText(text), selection && visibleText(selection), reading),
   defaultMode: "split",
 };

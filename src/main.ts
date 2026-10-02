@@ -441,14 +441,14 @@ function scheduleCount() {
 function updateCount() {
   countEl.classList.toggle("clickable", doc.large && !doc.previewWanted);
   if (doc.large && !doc.previewWanted) {
-    countEl.textContent = "大文件 · 点击统计";
+    countEl.textContent = doc.readOnly ? "只读大文件 · 点击统计" : "大文件，预览已暂停 · 点击统计";
     return;
   }
   const sel = view.state.selection.main;
   const picked = mode !== "read" && !sel.empty ? view.state.sliceDoc(sel.from, sel.to) : null;
   const tab = doc;
   const seq = ++countSeq;
-  const stats = tab.format.stats(view.state.doc.toString(), picked);
+  const stats = tab.format.stats(view.state.doc.toString(), picked, mode === "read");
   if (typeof stats === "string") countEl.textContent = stats;
   else stats.then((text) => seq === countSeq && doc === tab && (countEl.textContent = text));
 }
@@ -636,8 +636,11 @@ function loadRenderer(format: FormatPlugin): PreviewRenderer | Promise<PreviewRe
   );
 }
 
-/** Large files: say the preview is paused and offer to render it. */
+/** Large files: say the preview is paused and offer to render it (read-only ones get none). */
 function showLargeNotice() {
+  if (doc.readOnly) {
+    return showPreviewError({ message: `文件过大（${formatSize(doc.size)}），以只读方式打开，不提供预览。` });
+  }
   const empty = !preview.childElementCount;
   showPreviewError({
     message: empty

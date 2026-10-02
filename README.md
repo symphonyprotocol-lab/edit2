@@ -20,7 +20,7 @@ Built with Tauri 2 and CodeMirror 6. The layout mockup is in [design/mockup.html
 | HTML | html, htm | The page, in a sandbox | Format |
 
 - **Status bar**: shows the format, which you can change for a file (e.g. preview a `.txt` as Markdown; remembered per file), the encoding, and a summary from the format (word count, rows × columns, or whether the file parses). Parse errors show above the preview; clicking one jumps to the line.
-- **Formatting** (⇧⌥F, Edit menu or the status bar): pretty-prints JSON, YAML, XML and HTML and tidies TOML without dropping comments; JSON numbers keep their exact digits. One ⌘Z undoes it. Files with a syntax error are left alone. JSON and XML can also be minified.
+- **Formatting** (⇧⌥F, Format menu or the status bar): pretty-prints JSON, YAML, XML and HTML and tidies TOML without dropping comments; JSON numbers keep their exact digits. One ⌘Z undoes it. Files with a syntax error are left alone. JSON and XML can also be minified.
 - **Tree previews** open two levels deep, keep what you opened across edits, page long lists, and move the editor to a row's line when you click it in Split view.
 - **CSV** detects the delimiter (comma, tab, semicolon, pipe), handles quoted fields with line breaks, colours columns in the editor, and adds table rows as you scroll, so 100,000 rows open instantly.
 - **HTML** runs no scripts by default: the page is shown in a sandboxed frame with its local images, styles and fonts. "允许脚本" runs it in an isolated sandbox with its own origin (and allows external scripts, styles and fonts); it is per document and off again next launch.
@@ -39,6 +39,13 @@ Built with Tauri 2 and CodeMirror 6. The layout mockup is in [design/mockup.html
 - **Large files**: from 5 MB, the preview and word count wait for a click. Files over 50 MB open read-only after you confirm.
 - **Appearance**: follows the system light or dark setting. The font size is adjustable (⌘= / ⌘- / ⌘0), and soft wrap can be turned off per tab (⌥Z).
 - **Settings** (views, font size, recent files, per-file formats) are kept in `settings.json` in the app data folder. The first launch copies mdit's drafts and settings over and leaves mdit's own data in place.
+
+## Upgrading from mdit
+
+- The first launch of edit2 copies mdit's drafts, preferences and recent files and says so once. mdit's own data is left in place; once edit2 has everything, delete mdit so "Open With" lists only one of them.
+- `.txt` files are now plain text: no Markdown highlighting or preview. To keep previewing one as Markdown, pick Markdown in the status bar's format menu (remembered for that file).
+- A UTF-8 byte order mark is now kept when the file is saved (mdit removed it).
+- Files in other encodings (GBK, Big5, Shift_JIS, …) now open instead of being refused, and are saved back in their encoding.
 
 ## Keyboard shortcuts
 

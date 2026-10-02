@@ -60,7 +60,14 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             &PredefinedMenuItem::select_all(app, Some("全选"))?,
             &sep()?,
             &item("find", "查找…", "CmdOrCtrl+F")?,
-            &sep()?,
+        ],
+    )?;
+
+    let format_menu = Submenu::with_items(
+        app,
+        "格式",
+        true,
+        &[
             &item("format_doc", "格式化文档", "Shift+Alt+F")?,
             &MenuItem::with_id(app, "minify_doc", "压缩", true, None::<&str>)?,
         ],
@@ -100,7 +107,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu],
+        &[&app_menu, &file_menu, &edit_menu, &format_menu, &view_menu, &window_menu],
     )?;
     app.set_menu(menu)?;
 

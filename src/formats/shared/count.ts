@@ -11,9 +11,10 @@ export function countWords(text: string): { words: number; minutes: number } {
   return { words, minutes };
 }
 
-/** "1,204 字", or "已选 30 / 1,204 字" with a selection. */
-export function wordStats(text: string, selection: string | null): string {
-  const { words } = countWords(text);
+/** "1,204 字", "已选 30 / 1,204 字" with a selection, "1,204 字 · 约 5 分钟" when reading. */
+export function wordStats(text: string, selection: string | null, reading = false): string {
+  const { words, minutes } = countWords(text);
+  if (reading) return words ? `${words.toLocaleString()} 字 · 约 ${minutes} 分钟` : "0 字";
   if (selection) return `已选 ${countWords(selection).words.toLocaleString()} / ${words.toLocaleString()} 字`;
   return `${words.toLocaleString()} 字`;
 }
