@@ -1,5 +1,5 @@
 import type { FormatPlugin } from "../types";
-import { lineCount } from "../shared/count";
+import { validityStats } from "../shared/validity";
 
 export const toml: FormatPlugin = {
   id: "toml",
@@ -15,10 +15,6 @@ export const toml: FormatPlugin = {
   preview: () => import("./preview").then((m) => m.tomlPreview),
   formatter: () => import("./format").then((m) => m.tomlFormatter),
   canFormat: true,
-  async stats(text) {
-    const { firstProblem } = await import("./parse");
-    const problem = text.trim() ? firstProblem(text) : null;
-    return `${lineCount(text).toLocaleString()} 行 · ${problem ? `第 ${problem.line ?? "?"} 行有错误` : "有效"}`;
-  },
+  stats: validityStats(() => import("./parse").then((m) => m.parseToml)),
   defaultMode: "write",
 };

@@ -15,7 +15,6 @@ import type { PreviewContext, PreviewRenderer } from "../types";
 
 /** Documents whose scripts the user allowed (path, or "" for untitled). Not saved. */
 const scriptsOn = new Set<string>();
-let lastSource = "";
 let version = 0;
 
 const keyOf = (ctx: PreviewContext) => ctx.path ?? "";
@@ -153,7 +152,6 @@ async function renderLive(source: string, ctx: PreviewContext) {
 }
 
 function render(source: string, ctx: PreviewContext) {
-  lastSource = source;
   return (scriptsOn.has(keyOf(ctx)) ? renderLive : renderSafe)(source, ctx).then(() => ({}));
 }
 
@@ -164,7 +162,6 @@ export const htmlPreview: PreviewRenderer = {
     if (!b) return false;
     if (b.dataset.htmlScripts === "on") scriptsOn.add(keyOf(ctx));
     else scriptsOn.delete(keyOf(ctx));
-    render(lastSource, ctx);
-    return true;
+    return "rerender";
   },
 };

@@ -1,6 +1,7 @@
 import { parseTree, type Node, type ParseError } from "jsonc-parser";
 import { lineAt, lineStarts, SyntaxProblem } from "../types";
 import type { TreeNode } from "../shared/tree";
+import { memoLast } from "../shared/validity";
 
 const MESSAGES: Record<number, string> = {
   1: "无效的字符",
@@ -24,16 +25,8 @@ const MESSAGES: Record<number, string> = {
 /** Comments and trailing commas are accepted everywhere (JSONC is common under a .json name). */
 const OPTIONS = { allowTrailingComma: true, disallowComments: false };
 
-export function firstProblem(text: string): SyntaxProblem | null {
-  const errors: ParseError[] = [];
-  parseTree(text, errors, OPTIONS);
-  if (!errors.length) return null;
-  const e = errors[0];
-  return new SyntaxProblem(MESSAGES[e.error] ?? "语法错误", lineAt(lineStarts(text), e.offset) + 1);
-}
-
 /** Parse into tree nodes, numbers keeping their source spelling. Throws SyntaxProblem. */
-export function parseJson(text: string): TreeNode | null {
+export const parseJson = memoLast((text: string): TreeNode | null => {
   const errors: ParseError[] = [];
   const root = parseTree(text, errors, OPTIONS);
   if (errors.length) {
@@ -71,4 +64,4 @@ export function parseJson(text: string): TreeNode | null {
     }
   };
   return convert(root);
-}
+});

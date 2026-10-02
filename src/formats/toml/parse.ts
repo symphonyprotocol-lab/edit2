@@ -1,9 +1,10 @@
 import { parse, TomlDate, TomlError } from "smol-toml";
 import { SyntaxProblem } from "../types";
 import type { TreeNode } from "../shared/tree";
+import { memoLast } from "../shared/validity";
 import { lineIndex } from "./scan";
 
-export function parseToml(text: string): Record<string, unknown> {
+export const parseToml = memoLast((text: string): Record<string, unknown> => {
   try {
     return parse(text, { integersAsBigInt: "asNeeded" });
   } catch (err) {
@@ -13,17 +14,7 @@ export function parseToml(text: string): Record<string, unknown> {
     }
     throw err;
   }
-}
-
-export function firstProblem(text: string): SyntaxProblem | null {
-  try {
-    parseToml(text);
-    return null;
-  } catch (err) {
-    if (err instanceof SyntaxProblem) return err;
-    throw err;
-  }
-}
+});
 
 export function tomlTree(text: string, data: Record<string, unknown>): TreeNode {
   const lines = lineIndex(text);

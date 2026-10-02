@@ -1,8 +1,9 @@
 import { isAlias, isMap, isPair, isScalar, isSeq, parseAllDocuments, type Document } from "yaml";
 import { lineAt, lineStarts, SyntaxProblem } from "../types";
 import type { TreeNode } from "../shared/tree";
+import { memoLast } from "../shared/validity";
 
-export function parseYaml(text: string): Document.Parsed[] {
+export const parseYaml = memoLast((text: string): Document.Parsed[] => {
   const docs = parseAllDocuments(text);
   if (!Array.isArray(docs)) return []; // an empty stream
   for (const doc of docs) {
@@ -10,17 +11,7 @@ export function parseYaml(text: string): Document.Parsed[] {
     if (e) throw new SyntaxProblem(e.message.split("\n")[0].replace(/ at line \d+, column \d+:?$/, ""), e.linePos?.[0].line);
   }
   return docs;
-}
-
-export function firstProblem(text: string): SyntaxProblem | null {
-  try {
-    parseYaml(text);
-    return null;
-  } catch (err) {
-    if (err instanceof SyntaxProblem) return err;
-    throw err;
-  }
-}
+});
 
 export function yamlTree(text: string, docs: Document.Parsed[]): TreeNode[] {
   const starts = lineStarts(text);

@@ -7,11 +7,9 @@ const NUMBER = /^[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)?(?:\.\d+)?(?:[eE][-+]?\d+)?%?$/
 /** Whether the first row is a header, per file. */
 const headers = new Map<string, boolean>();
 let shown = PAGE;
-let lastSource = "";
 let observer: IntersectionObserver | null = null;
 
 function render(source: string, ctx: PreviewContext) {
-  lastSource = source;
   observer?.disconnect();
   const delimiter = detectDelimiter(source);
   const { rows, lines, columns } = parseCsv(source, delimiter);
@@ -105,9 +103,7 @@ export const csvPreview: PreviewRenderer = {
     const box = (e.target as HTMLElement).closest<HTMLInputElement>("input[data-csv-header]");
     if (!box) return false;
     headers.set(ctx.path ?? "", box.checked);
-    ctx.layoutChanged();
-    render(lastSource, ctx);
-    return true;
+    return "rerender";
   },
   reset() {
     shown = PAGE;

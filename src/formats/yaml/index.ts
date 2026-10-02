@@ -1,5 +1,5 @@
 import type { FormatPlugin } from "../types";
-import { lineCount } from "../shared/count";
+import { validityStats } from "../shared/validity";
 
 export const yaml: FormatPlugin = {
   id: "yaml",
@@ -9,10 +9,6 @@ export const yaml: FormatPlugin = {
   preview: () => import("./preview").then((m) => m.yamlPreview),
   formatter: () => import("./format").then((m) => m.yamlFormatter),
   canFormat: true,
-  async stats(text) {
-    const { firstProblem } = await import("./parse");
-    const problem = text.trim() ? firstProblem(text) : null;
-    return `${lineCount(text).toLocaleString()} 行 · ${problem ? `第 ${problem.line ?? "?"} 行有错误` : "有效"}`;
-  },
+  stats: validityStats(() => import("./parse").then((m) => m.parseYaml)),
   defaultMode: "write",
 };

@@ -1,13 +1,12 @@
 import type { PreviewContext, PreviewRenderer } from "../types";
-import { SyntaxProblem } from "../types";
 import { extensionOf } from "../registry";
 import { newTreeState, renderTree } from "../shared/tree";
+import { asRenderError } from "../shared/tree-preview";
 import { parseXml, xmlTree } from "./parse";
 
 let state = newTreeState();
 /** SVG files: show the picture (true) or the element tree. */
 let asImage: boolean | null = null;
-let lastSource = "";
 
 function toolbar(image: boolean): HTMLElement {
   const bar = document.createElement("div");
@@ -29,13 +28,11 @@ function toolbar(image: boolean): HTMLElement {
 }
 
 function render(source: string, ctx: PreviewContext) {
-  lastSource = source;
   let doc: Document;
   try {
     doc = parseXml(source);
   } catch (err) {
-    if (err instanceof SyntaxProblem) return { error: { message: err.message, line: err.line } };
-    throw err;
+    return asRenderError(err);
   }
   const svg = !!ctx.path && extensionOf(ctx.path) === "svg";
   if (!svg) return { anchors: renderTree(ctx.container, xmlTree(source, doc), { state, onPick: ctx.revealLine }) };
@@ -59,13 +56,11 @@ function render(source: string, ctx: PreviewContext) {
 
 export const xmlPreview: PreviewRenderer = {
   render,
-  click(e, ctx) {
+  click(e) {
     const b = (e.target as HTMLElement).closest<HTMLElement>("[data-svg-view]");
     if (!b) return false;
     asImage = b.dataset.svgView === "image";
-    ctx.layoutChanged();
-    render(lastSource, ctx);
-    return true;
+    return "rerender";
   },
   reset() {
     state = newTreeState();

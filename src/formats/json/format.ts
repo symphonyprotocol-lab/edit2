@@ -1,6 +1,7 @@
 import { applyEdits, createScanner, format } from "jsonc-parser";
 import type { Formatter } from "../types";
-import { firstProblem } from "./parse";
+import { problemOf } from "../shared/validity";
+import { parseJson } from "./parse";
 
 // jsonc-parser's SyntaxKind is a const enum, which isolated modules cannot read.
 const LINE_COMMENT = 12;
@@ -9,7 +10,7 @@ const TRIVIA = 15;
 const EOF = 17;
 
 function check(text: string) {
-  const problem = firstProblem(text);
+  const problem = problemOf(parseJson, text);
   if (problem) throw problem;
 }
 

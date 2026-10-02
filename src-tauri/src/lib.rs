@@ -353,10 +353,7 @@ fn read_file(path: String, encoding: Option<String>, force: Option<bool>) -> Res
     let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
     let decoded = match encoding {
         Some(label) => codec::decode_as(&bytes, &label).ok_or_else(|| format!("未知的编码：{label}"))?,
-        None => codec::decode(&bytes).map_err(|e| match e {
-            codec::DecodeError::Binary => "这不是文本文件".to_string(),
-            codec::DecodeError::Unknown => "无法识别文件的编码".to_string(),
-        })?,
+        None => codec::decode(&bytes).map_err(|codec::DecodeError::Binary| "这不是文本文件".to_string())?,
     };
     Ok(FileData {
         path: normalize(&path),

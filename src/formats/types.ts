@@ -37,14 +37,16 @@ export interface PreviewRenderer {
    * leave the last good output in place and report the error instead.
    */
   render(source: string, ctx: PreviewContext): RenderResult | Promise<RenderResult>;
-  /** A click inside the preview. Unhandled link clicks fall back to `ctx.openLink`. */
-  click?(e: MouseEvent, ctx: PreviewContext): boolean | void;
+  /**
+   * A click inside the preview: true if handled, "rerender" if handled and the
+   * preview should be rendered again (e.g. a view option changed). Unhandled
+   * link clicks fall back to `ctx.openLink`.
+   */
+  click?(e: MouseEvent, ctx: PreviewContext): boolean | "rerender" | void;
   /** Another document is about to be shown: drop per-document state. */
   reset?(): void;
   /** The system switched between light and dark. */
   themeChanged?(): void;
-  /** Whether the renderer scrolls on its own (the pane must not scroll). */
-  fillsPane?: boolean;
 }
 
 export interface RenderResult {
@@ -96,13 +98,6 @@ export class SyntaxProblem extends Error {
   constructor(message: string, public line?: number) {
     super(message);
   }
-}
-
-/** 1-based line number of a character offset. */
-export function lineOfOffset(text: string, offset: number): number {
-  let line = 1;
-  for (let i = 0; i < offset && i < text.length; i++) if (text.charCodeAt(i) === 10) line++;
-  return line;
 }
 
 /** Offsets where each line starts, for repeated offset → line lookups. */

@@ -134,6 +134,8 @@ interface Tab {
   readOnly: boolean;
   /** For a large file, the user asked for the preview / counts. */
   previewWanted: boolean;
+  /** Size of the file on disk when it was read, in bytes. */
+  size: number;
 }
 
 const AUTOSAVE_DELAY = 800;
@@ -241,6 +243,7 @@ function createTab(text = "", started = true, format = formatOf(null)): Tab {
     large: false,
     readOnly: false,
     previewWanted: false,
+    size: 0,
   };
 }
 
@@ -270,6 +273,8 @@ function onUpdate(u: ViewUpdate) {
     if (!doc.started) doc.started = true;
     doc.dirty = !u.state.doc.eq(doc.saved);
     if (doc.dirty) scheduleAutosave(doc);
+    // Back to the saved text, which its encoding could hold.
+    else doc.unmappable = false;
     refreshChrome();
     schedulePreview();
     scheduleCount();
@@ -545,6 +550,9 @@ function revealLine(line: number) {
   if (mode !== "split") return;
   const n = Math.min(view.state.doc.lines, Math.max(1, line + 1));
   const at = view.state.doc.line(n).from;
+  // The preview is where the user is looking: keep scroll sync from moving it.
+  syncSource = null;
+  claimSync("preview");
   view.dispatch({ selection: EditorSelection.cursor(at), effects: EditorView.scrollIntoView(at, { y: "center" }) });
 }
 
@@ -633,7 +641,7 @@ function showLargeNotice() {
   const empty = !preview.childElementCount;
   showPreviewError({
     message: empty
-      ? `文件较大（${formatSize(doc.large ? textOf(doc).length : 0)}），预览已暂停。点击这里渲染预览。`
+      ? `文件较大（${formatSize(doc.size)}），预览已暂停。点击这里渲染预览。`
       : "大文件的预览不随编辑自动更新。点击这里刷新。",
   });
   previewErrorEl.dataset.action = "render";
@@ -701,7 +709,9 @@ window.addEventListener("resize", () => (anchorsMeasured = false));
 
 preview.addEventListener("click", (e) => {
   const renderer = previewFormat && renderers.get(previewFormat.id);
-  if (renderer?.click?.(e, previewContext(renderSeq, doc))) return;
+  const handled = renderer?.click?.(e, previewContext(renderSeq, doc));
+  if (handled === "rerender") renderPreview();
+  if (handled) return;
   if (e.defaultPrevented) return;
   const a = (e.target as HTMLElement).closest("a");
   if (!a) return;
@@ -990,7 +1000,10 @@ async function runFormatter(kind: "format" | "minify") {
   }
   // Typing or a tab switch meanwhile: do not apply a stale result.
   if (doc !== tab || view.state.doc.toString() !== text) return;
-  out = out.replace(/\s+$/, "") + (text.endsWith("\n") ? "\n" : "");
+  // Keep whether the file ends with a line break. Only one break is added or
+  // removed: more may be content (a YAML `|+` block at the end of the file).
+  if (text.endsWith("\n") && !out.endsWith("\n")) out += "\n";
+  else if (!text.endsWith("\n") && out.endsWith("\n") && !out.endsWith("\n\n")) out = out.slice(0, -1);
   if (out === text) return toast(kind === "format" ? "已经是格式化后的样子" : "已经是压缩后的样子");
 
   // One undoable step; the cursor stays next to the same character.
@@ -1264,6 +1277,7 @@ function takeFileData(tab: Tab, data: FileData) {
   tab.encoding = data.encoding;
   tab.bom = data.bom;
   tab.guessed = data.guessed;
+  tab.size = data.size;
   tab.large = data.size >= LARGE_FILE;
   tab.previewWanted = false;
 }
@@ -1394,7 +1408,9 @@ async function save(as = false): Promise<boolean> {
   clearTimeout(tab.autosaveTimer);
   let target = tab.path;
   if (!target || as) {
-    target = await host.pickSavePath(tab.path ?? suggestName(tab), dialogFilters(tab.format));
+    // As when opening: macOS would only allow the listed extensions, so a file of
+    // an unlisted kind (.conf, .env, …) could not keep its own name there.
+    target = await host.pickSavePath(tab.path ?? suggestName(tab), isMac ? [] : dialogFilters(tab.format));
     if (!target) return false;
   }
   let written;

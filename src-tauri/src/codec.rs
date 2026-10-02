@@ -19,8 +19,6 @@ pub struct Decoded {
 pub enum DecodeError {
     /// Looks like a binary file.
     Binary,
-    /// No encoding decodes it cleanly.
-    Unknown,
 }
 
 /// Fewer non-ASCII bytes than this and a non-UTF-8 guess is flagged as uncertain.
@@ -40,7 +38,10 @@ pub fn decode_as(bytes: &[u8], label: &str) -> Option<Decoded> {
     Some(Decoded { text: text.into_owned(), encoding: encoding.name(), bom, guessed: false })
 }
 
-/// Detect the encoding and decode.
+/// Detect the encoding and decode. Bytes the guessed encoding cannot decode
+/// become U+FFFD and the result is flagged as a guess, so the file still opens
+/// and the user can pick another encoding (writing U+FFFD back into a legacy
+/// encoding is refused, so nothing is lost silently).
 pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
     if let Some((encoding, len)) = Encoding::for_bom(bytes) {
         let (text, _) = encoding.decode_without_bom_handling(&bytes[len..]);
@@ -58,11 +59,14 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
     let mut detector = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Deny);
     detector.feed(bytes, true);
     let encoding = detector.guess(None, chardetng::Utf8Detection::Allow);
-    let text = encoding
-        .decode_without_bom_handling_and_without_replacement(bytes)
-        .ok_or(DecodeError::Unknown)?;
+    let (text, malformed) = encoding.decode_without_bom_handling(bytes);
     let evidence = bytes.iter().filter(|b| !b.is_ascii()).count();
-    Ok(Decoded { text: text.into_owned(), encoding: encoding.name(), bom: false, guessed: evidence < EVIDENCE })
+    Ok(Decoded {
+        text: text.into_owned(),
+        encoding: encoding.name(),
+        bom: false,
+        guessed: malformed || evidence < EVIDENCE,
+    })
 }
 
 #[derive(Debug, PartialEq)]
@@ -127,6 +131,20 @@ mod tests {
         assert_eq!(d.text, source);
         assert!(!d.guessed);
         assert_eq!(encode(&d.text, d.encoding, d.bom).unwrap(), bytes);
+    }
+
+    #[test]
+    fn stray_bytes_still_open_as_a_guess() {
+        let mut bytes = gbk("名称,数量,备注\n苹果,3,红色的苹果很甜\n香蕉,12,产地是海南省三亚市\n");
+        bytes.extend_from_slice(&[0x81, 0x0A]); // a lead byte with no trail byte
+        // Detection may settle on another encoding, but the file opens …
+        assert!(decode(&bytes).is_ok());
+        // … and reopening it as GBK recovers the text, the bad byte as U+FFFD,
+        let d = decode_as(&bytes, "GBK").unwrap();
+        assert!(d.text.starts_with("名称,数量,备注"));
+        assert!(d.text.contains('\u{FFFD}'));
+        // which is never written back into GBK silently.
+        assert_eq!(encode(&d.text, d.encoding, false), Err(EncodeError::Unmappable));
     }
 
     #[test]

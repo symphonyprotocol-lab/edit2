@@ -1,5 +1,6 @@
 import { lineAt, lineStarts, SyntaxProblem } from "../types";
 import type { TreeNode } from "../shared/tree";
+import { memoLast } from "../shared/validity";
 
 /** The browser's parser error, as a SyntaxProblem (null when the document is well-formed). */
 function parserError(doc: Document): SyntaxProblem | null {
@@ -11,16 +12,13 @@ function parserError(doc: Document): SyntaxProblem | null {
   return new SyntaxProblem(m ? m[2].trim() : text.trim() || "XML 语法错误", m ? Number(m[1]) : undefined);
 }
 
-export function parseXml(text: string): Document {
+/** The parsed document (shared by the status bar, preview and formatter: never mutate it). */
+export const parseXml = memoLast((text: string): Document => {
   const doc = new DOMParser().parseFromString(text, "application/xml");
   const problem = parserError(doc);
   if (problem) throw problem;
   return doc;
-}
-
-export function firstProblem(text: string): SyntaxProblem | null {
-  return parserError(new DOMParser().parseFromString(text, "application/xml"));
-}
+});
 
 /**
  * Offsets of every start tag, in document order. The DOM keeps no positions,
