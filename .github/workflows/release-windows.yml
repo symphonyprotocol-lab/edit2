@@ -20,6 +20,9 @@ jobs:
     runs-on: windows-latest
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,7 +50,6 @@ jobs:
       - run: npm run tauri build
 
       - name: Upload installer
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" src-tauri/target/release/bundle/nsis/*-setup.exe --clobber
