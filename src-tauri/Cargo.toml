@@ -1,6 +1,6 @@
 [package]
 name = "edit2"
-version = "0.1.0"
+version = "0.2.0"
 description = "A quick editor and viewer for text and data files"
 edition = "2021"
 
