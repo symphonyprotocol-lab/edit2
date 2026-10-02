@@ -496,7 +496,13 @@ function openLink(href: string, scope: ParentNode = preview) {
       [...scope.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6")].find(
         (h) => slug(h.textContent ?? "") === slug(id),
       );
-    hit?.scrollIntoView({ block: "start", behavior: "smooth" });
+    if (!hit) return;
+    // Inside a preview frame (HTML), smooth scrolling does not reach the pane: scroll it here.
+    const frame = hit.ownerDocument.defaultView?.frameElement;
+    if (!frame) return hit.scrollIntoView({ block: "start", behavior: "smooth" });
+    const top =
+      frame.getBoundingClientRect().top + hit.getBoundingClientRect().top - previewScroll.getBoundingClientRect().top;
+    previewScroll.scrollTo({ top: previewScroll.scrollTop + top - 8, behavior: "smooth" });
   } else if (/^(https?|mailto|tel):/i.test(href)) {
     host.openUrl(href);
   } else {
@@ -524,6 +530,19 @@ function revealLine(line: number) {
   view.dispatch({ selection: EditorSelection.cursor(at), effects: EditorView.scrollIntoView(at, { y: "center" }) });
 }
 
+/** Per document, the token its page is published under for the script preview. */
+const pageTokens = new Map<string, string>();
+
+async function publishPage(tab: Tab, html: string): Promise<string | null> {
+  if (!inTauri) return null;
+  const key = tab.path ?? `tab-${tab.id}`;
+  let token = pageTokens.get(key);
+  if (!token) pageTokens.set(key, (token = crypto.randomUUID()));
+  await host.servePreview(token, tab.path, html);
+  const name = tab.path ? basename(tab.path) : "index.html";
+  return `${host.previewOrigin}/${token}/${encodeURIComponent(name)}`;
+}
+
 function previewContext(seq: number, tab: Tab): PreviewContext {
   return {
     container: preview,
@@ -540,6 +559,7 @@ function previewContext(seq: number, tab: Tab): PreviewContext {
     },
     goToLine,
     revealLine,
+    publishPage: (html) => publishPage(tab, html),
     layoutChanged: () => (anchorsMeasured = false),
     isCurrent: () => seq === renderSeq && doc === tab,
   };

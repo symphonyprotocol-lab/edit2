@@ -2035,6 +2035,7 @@ dependencies = [
  "chardetng",
  "encoding_rs",
  "objc2",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tauri",

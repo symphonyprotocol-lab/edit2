@@ -77,6 +77,12 @@ export const host = {
   setFormatMenu: (format: boolean, minify: boolean): Promise<void> =>
     inTauri ? invoke("set_format_menu", { format, minify }) : Promise.resolve(),
 
+  servePreview: (token: string, path: string | null, html: string): Promise<void> =>
+    inTauri ? invoke("serve_preview", { token, path, html }) : Promise.resolve(),
+
+  /** Origin of the backend's `preview:` protocol (Windows maps custom schemes to http). */
+  previewOrigin: /Windows/i.test(navigator.userAgent) ? "http://preview.localhost" : "preview://localhost",
+
   allowAssets: (paths: string[]): Promise<void> =>
     inTauri ? invoke("allow_assets", { paths }) : Promise.resolve(),
 

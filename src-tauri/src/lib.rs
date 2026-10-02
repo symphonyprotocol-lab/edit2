@@ -13,6 +13,7 @@ mod codec;
 mod mac_quit;
 #[cfg(target_os = "macos")]
 mod menu;
+mod preview;
 
 /// What the backend knows about each editor window. A window has one tab per file.
 #[derive(Default)]
@@ -259,7 +260,10 @@ fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     result
 }
 
-const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico"];
+/// Files a preview may load: images, and the styles and fonts of HTML pages.
+const ASSET_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico", "css", "woff", "woff2", "ttf", "otf",
+];
 
 fn file_args(args: impl Iterator<Item = String>, cwd: Option<&Path>) -> Vec<String> {
     args.filter(|a| !a.starts_with('-'))
@@ -380,17 +384,18 @@ fn write_file(
     })
 }
 
-/// Let the preview load the local images a document references, and nothing else.
+/// Let the preview load the local images (and HTML styles and fonts) a
+/// document references, and nothing else.
 #[tauri::command]
 fn allow_assets(app: AppHandle, paths: Vec<String>) {
     let scope = app.asset_protocol_scope();
     for p in paths {
         let path = Path::new(&p);
-        let is_image = path
+        let allowed = path
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| IMAGE_EXTS.contains(&e.to_ascii_lowercase().as_str()));
-        if !is_image || !path.is_file() {
+            .is_some_and(|e| ASSET_EXTS.contains(&e.to_ascii_lowercase().as_str()));
+        if !allowed || !path.is_file() {
             continue;
         }
         let _ = scope.allow_file(path);
@@ -407,6 +412,12 @@ fn set_format_menu(app: AppHandle, format: bool, minify: bool) {
     menu::set_enabled(&app, &[("format_doc", format), ("minify_doc", minify)]);
     #[cfg(not(target_os = "macos"))]
     let _ = (app, format, minify);
+}
+
+/// Publish an HTML document for the script-enabled preview (see preview.rs).
+#[tauri::command]
+fn serve_preview(sites: tauri::State<'_, preview::Sites>, token: String, path: Option<String>, html: String) {
+    sites.put(token, path, html);
 }
 
 #[tauri::command]
@@ -440,6 +451,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        .manage(preview::Sites::default())
+        .register_uri_scheme_protocol("preview", |ctx, request| {
+            ctx.app_handle().state::<preview::Sites>().serve(&request)
+        })
         .invoke_handler(tauri::generate_handler![
             init_window,
             report_state,
@@ -448,6 +463,7 @@ pub fn run() {
             delete_draft,
             allow_assets,
             set_format_menu,
+            serve_preview,
             file_mtime,
             quit
         ])

@@ -4,7 +4,7 @@ import { lineCount } from "../shared/count";
 export const xml: FormatPlugin = {
   id: "xml",
   label: "XML",
-  extensions: ["xml", "svg", "plist", "xsd", "xsl", "xslt", "rss", "atom", "xhtml"],
+  extensions: ["xml", "svg", "plist", "xsd", "xsl", "xslt", "rss", "atom"],
   language: () => import("@codemirror/lang-xml").then((m) => m.xml()),
   preview: () => import("./preview").then((m) => m.xmlPreview),
   formatter: () => import("./format").then((m) => m.xmlFormatter),

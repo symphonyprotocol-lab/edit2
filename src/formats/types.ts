@@ -70,6 +70,11 @@ export interface PreviewContext {
   goToLine(line: number): void;
   /** In split view, move the editor to a 0-based line without taking focus. */
   revealLine(line: number): void;
+  /**
+   * Serve an HTML page from its own origin (for running its scripts in a
+   * sandbox); resolves to the URL to load, or null where that is unavailable.
+   */
+  publishPage(html: string): Promise<string | null>;
   /** Layout changed after rendering (images, diagrams): offsets must be re-measured. */
   layoutChanged(): void;
   /** False once a newer render or another document has taken over. */

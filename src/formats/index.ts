@@ -10,6 +10,7 @@ import { xml } from "./xml";
 import { yaml } from "./yaml";
 import { toml } from "./toml";
 import { csv } from "./csv";
+import { html } from "./html";
 
 register(markdown, { untitled: true });
 register(plainText, { fallback: true });
@@ -18,6 +19,7 @@ register(xml);
 register(yaml);
 register(toml);
 register(csv);
+register(html);
 
 export * from "./registry";
 export * from "./types";
