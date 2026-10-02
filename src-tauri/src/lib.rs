@@ -400,6 +400,15 @@ fn allow_assets(app: AppHandle, paths: Vec<String>) {
     }
 }
 
+/// The front tab's format can (or cannot) be formatted / minified.
+#[tauri::command]
+fn set_format_menu(app: AppHandle, format: bool, minify: bool) {
+    #[cfg(target_os = "macos")]
+    menu::set_enabled(&app, &[("format_doc", format), ("minify_doc", minify)]);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, format, minify);
+}
+
 #[tauri::command]
 fn file_mtime(path: String) -> Option<u64> {
     mtime_of(Path::new(&path))
@@ -438,6 +447,7 @@ pub fn run() {
             write_file,
             delete_draft,
             allow_assets,
+            set_format_menu,
             file_mtime,
             quit
         ])

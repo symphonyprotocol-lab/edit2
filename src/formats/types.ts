@@ -21,7 +21,7 @@ export interface FormatPlugin {
   /** Preview renderer, loaded on first use. Without one the format is edit-only. */
   preview?: () => Promise<PreviewRenderer>;
   /** Status bar summary, e.g. "1,204 字" or "120 行 × 6 列". */
-  stats(text: string, selection: string | null): string;
+  stats(text: string, selection: string | null): string | Promise<string>;
   /** Pretty-printing and minifying, loaded on first use. */
   formatter?: () => Promise<Formatter>;
   /** Whether the formatter can format / minify, known before it is loaded (for menus). */
@@ -66,8 +66,10 @@ export interface PreviewContext {
   openLink(href: string, scope?: ParentNode): void;
   /** Change the source (e.g. ticking a task box). `fn` returns null to do nothing. */
   editSource(fn: (doc: Text) => { from: number; to: number; insert: string } | null): void;
-  /** Put the editor on a 0-based line. */
+  /** Put the editor on a 0-based line (switching to split view from read). */
   goToLine(line: number): void;
+  /** In split view, move the editor to a 0-based line without taking focus. */
+  revealLine(line: number): void;
   /** Layout changed after rendering (images, diagrams): offsets must be re-measured. */
   layoutChanged(): void;
   /** False once a newer render or another document has taken over. */

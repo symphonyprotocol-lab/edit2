@@ -1,6 +1,13 @@
-import { EditorState, EditorSelection, type Extension, type StateEffect, type Text } from "@codemirror/state";
+import {
+  EditorState,
+  EditorSelection,
+  type Extension,
+  type StateEffect,
+  type Text,
+  type TransactionSpec,
+} from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
-import { undo, redo } from "@codemirror/commands";
+import { undo, redo, isolateHistory } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import {
   editorExtensions,
@@ -16,6 +23,8 @@ import {
   formatById,
   formatFor,
   isKnownFile,
+  SyntaxProblem,
+  type Formatter,
   type FormatPlugin,
   type Mode,
   type PreviewContext,
@@ -381,6 +390,7 @@ function refreshChrome() {
   }
 
   formatEl.textContent = doc.format.label;
+  syncFormatMenu();
   encodingEl.textContent = encodingName(doc.encoding, doc.bom) + (doc.guessed ? "?" : "");
   encodingEl.title = doc.guessed ? "编码是根据很少的内容推测的，乱码时可换一种编码重新打开" : "文件编码";
   app.classList.toggle("no-preview", !doc.format.preview);
@@ -413,8 +423,13 @@ function updateCount() {
   }
   const sel = view.state.selection.main;
   const picked = mode !== "read" && !sel.empty ? view.state.sliceDoc(sel.from, sel.to) : null;
-  countEl.textContent = doc.format.stats(view.state.doc.toString(), picked);
+  const tab = doc;
+  const seq = ++countSeq;
+  const stats = tab.format.stats(view.state.doc.toString(), picked);
+  if (typeof stats === "string") countEl.textContent = stats;
+  else stats.then((text) => seq === countSeq && doc === tab && (countEl.textContent = text));
 }
+let countSeq = 0;
 
 let toastTimer = 0;
 function toast(text: string) {
@@ -502,6 +517,13 @@ function goToLine(line: number) {
   view.focus();
 }
 
+function revealLine(line: number) {
+  if (mode !== "split") return;
+  const n = Math.min(view.state.doc.lines, Math.max(1, line + 1));
+  const at = view.state.doc.line(n).from;
+  view.dispatch({ selection: EditorSelection.cursor(at), effects: EditorView.scrollIntoView(at, { y: "center" }) });
+}
+
 function previewContext(seq: number, tab: Tab): PreviewContext {
   return {
     container: preview,
@@ -517,6 +539,7 @@ function previewContext(seq: number, tab: Tab): PreviewContext {
       renderPreview();
     },
     goToLine,
+    revealLine,
     layoutChanged: () => (anchorsMeasured = false),
     isCurrent: () => seq === renderSeq && doc === tab,
   };
@@ -858,9 +881,105 @@ function formatMenu(): MenuEntry[] {
       },
     });
   }
+  entries.push(
+    "-",
+    { label: "格式化文档", hint: "⇧⌥F", disabled: !tab.format.canFormat || tab.readOnly, run: () => runFormatter("format") },
+    { label: "压缩", disabled: !tab.format.canMinify || tab.readOnly, run: () => runFormatter("minify") },
+  );
+  if (tab.format.canFormat) {
+    entries.push({ heading: "格式化缩进（文件没有缩进时）" });
+    for (const [label, indent] of [["2 个空格", "  "], ["4 个空格", "    "], ["制表符", "\t"]]) {
+      entries.push({ label, checked: indentPref() === indent, run: () => prefs.set("indent", indent) });
+    }
+  }
   entries.push("-", { label: "自动换行", checked: tab.wrap, hint: "⌥Z", run: toggleWrap });
   return entries;
 }
+
+// ---------- formatting ----------
+
+const indentPref = () => prefs.get<string>("indent", "  ");
+
+/** The file's own indent unit if it has a consistent one, else the preference. */
+function indentFor(text: string): string {
+  let tabs = 0;
+  const spaces: number[] = [];
+  for (const line of text.split("\n", 5000)) {
+    const m = /^( +|\t+)\S/.exec(line);
+    if (!m) continue;
+    if (m[1][0] === "\t") tabs++;
+    else spaces.push(m[1].length);
+  }
+  if (tabs > spaces.length) return "\t";
+  if (spaces.length >= 2) {
+    const unit = Math.min(...spaces);
+    if (unit === 2 || unit === 4) return " ".repeat(unit);
+  }
+  return indentPref();
+}
+
+/** Position in `text` after `count` non-whitespace characters. */
+function afterSolid(text: string, count: number): number {
+  let seen = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (seen === count) return i;
+    if (!/\s/.test(text[i])) seen++;
+  }
+  return text.length;
+}
+
+const solidBefore = (text: string, pos: number) => text.slice(0, pos).replace(/\s+/g, "").length;
+
+const formatters = new Map<string, Formatter>();
+
+async function runFormatter(kind: "format" | "minify") {
+  const tab = doc;
+  const format = tab.format;
+  if (!tab.started) return;
+  const supported = kind === "format" ? format.canFormat : format.canMinify;
+  if (!supported || !format.formatter) return toast(`${format.label}不支持${kind === "format" ? "格式化" : "压缩"}`);
+  if (tab.readOnly) return toast("文件是只读的");
+
+  const text = view.state.doc.toString();
+  let out: string;
+  try {
+    let f = formatters.get(format.id);
+    if (!f) formatters.set(format.id, (f = await format.formatter()));
+    out = kind === "format" ? await f.format!(text, { indent: indentFor(text) }) : await f.minify!(text);
+  } catch (err) {
+    if (!(err instanceof SyntaxProblem)) return host.alert(kind === "format" ? "格式化失败" : "压缩失败", String(err));
+    toast(err.line ? `第 ${err.line} 行有语法错误，未${kind === "format" ? "格式化" : "压缩"}` : `有语法错误：${err.message}`);
+    if (err.line && doc === tab) goToLine(err.line - 1);
+    return;
+  }
+  // Typing or a tab switch meanwhile: do not apply a stale result.
+  if (doc !== tab || view.state.doc.toString() !== text) return;
+  out = out.replace(/\s+$/, "") + (text.endsWith("\n") ? "\n" : "");
+  if (out === text) return toast(kind === "format" ? "已经是格式化后的样子" : "已经是压缩后的样子");
+
+  // One undoable step; the cursor stays next to the same character.
+  const head = afterSolid(out, solidBefore(text, view.state.selection.main.head));
+  replaceContent(out, {
+    selection: EditorSelection.cursor(head),
+    annotations: isolateHistory.of("full"),
+    userEvent: kind === "format" ? "input.format" : "input.minify",
+    scrollIntoView: true,
+  });
+}
+
+let formatMenuState = "";
+/** Keep the native menu's format items in step with the front tab. */
+function syncFormatMenu() {
+  if (!document.hasFocus() && formatMenuState) return;
+  const state = `${!!doc.format.canFormat && !doc.readOnly}/${!!doc.format.canMinify && !doc.readOnly}`;
+  if (state === formatMenuState) return;
+  formatMenuState = state;
+  host.setFormatMenu(state.startsWith("true"), state.endsWith("true"));
+}
+window.addEventListener("focus", () => {
+  formatMenuState = "";
+  syncFormatMenu();
+});
 
 formatEl.addEventListener("click", () => showMenu(formatEl, formatMenu()));
 
@@ -1327,7 +1446,7 @@ async function checkDisk() {
 }
 
 /** Replace the editor text, changing only the span that differs so the cursor and scroll stay put. */
-function replaceContent(next: string) {
+function replaceContent(next: string, extra: Omit<TransactionSpec, "changes"> = {}) {
   const current = view.state.doc.toString();
   if (next === current) return;
   let start = 0;
@@ -1339,6 +1458,7 @@ function replaceContent(next: string) {
   ) end++;
   view.dispatch({
     changes: { from: start, to: current.length - end, insert: next.slice(start, next.length - end) },
+    ...extra,
   });
 }
 
@@ -1386,6 +1506,8 @@ const commands: Record<string, () => unknown> = {
   zoom_out: () => applyFont(fontSize - 1),
   zoom_reset: () => applyFont(15),
   toggle_wrap: () => doc.started && toggleWrap(),
+  format_doc: () => runFormatter("format"),
+  minify_doc: () => runFormatter("minify"),
 };
 
 // On macOS the native menu owns these shortcuts; elsewhere we handle them here.
@@ -1404,6 +1526,11 @@ window.addEventListener(
     if (handleShortcutsInPage && e.altKey && !mod && !e.shiftKey && e.code === "KeyZ") {
       e.preventDefault();
       commands.toggle_wrap();
+      return;
+    }
+    if (handleShortcutsInPage && e.altKey && e.shiftKey && !mod && e.code === "KeyF") {
+      e.preventDefault();
+      commands.format_doc();
       return;
     }
     if (mod && handleShortcutsInPage && !e.altKey) {
@@ -1490,4 +1617,4 @@ async function boot() {
 boot();
 
 // Dev only, in a plain browser: open files from the console, e.g. edit2.open("/abs/path.json").
-if (import.meta.env.DEV && !inTauri) Object.assign(window, { edit2: { open: openPath } });
+if (import.meta.env.DEV && !inTauri) Object.assign(window, { edit2: { open: openPath, view, commands } });

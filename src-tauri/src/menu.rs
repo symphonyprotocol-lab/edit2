@@ -1,7 +1,7 @@
 //! Native menu bar (macOS). Custom items are forwarded to the frontmost window
 //! as a `menu` event carrying the item id; the frontend owns the behaviour.
 
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter};
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
@@ -60,6 +60,9 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             &PredefinedMenuItem::select_all(app, Some("全选"))?,
             &sep()?,
             &item("find", "查找…", "CmdOrCtrl+F")?,
+            &sep()?,
+            &item("format_doc", "格式化文档", "Shift+Alt+F")?,
+            &MenuItem::with_id(app, "minify_doc", "压缩", true, None::<&str>)?,
         ],
     )?;
 
@@ -101,6 +104,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     )?;
     app.set_menu(menu)?;
 
+    set_enabled(app, &[("format_doc", false), ("minify_doc", false)]);
+
     app.on_menu_event(|app, event| {
         let id = event.id().0.as_str();
         if id == "quit" {
@@ -118,4 +123,21 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         }
     });
     Ok(())
+}
+
+/// Enable or disable custom items (the menu bar follows the front window's tab).
+pub fn set_enabled(app: &AppHandle, items: &[(&str, bool)]) {
+    let Some(menu) = app.menu() else {
+        return;
+    };
+    for kind in menu.items().unwrap_or_default() {
+        let Some(sub) = kind.as_submenu() else {
+            continue;
+        };
+        for (id, on) in items {
+            if let Some(MenuItemKind::MenuItem(item)) = sub.get(*id) {
+                let _ = item.set_enabled(*on);
+            }
+        }
+    }
 }

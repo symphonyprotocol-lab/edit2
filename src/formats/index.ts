@@ -5,9 +5,13 @@
 import { register } from "./registry";
 import { markdown } from "./markdown";
 import { plainText } from "./text";
+import { json } from "./json";
+import { xml } from "./xml";
 
 register(markdown, { untitled: true });
 register(plainText, { fallback: true });
+register(json);
+register(xml);
 
 export * from "./registry";
-export type * from "./types";
+export * from "./types";

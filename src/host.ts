@@ -63,7 +63,7 @@ async function devRead(path: string): Promise<FileData> {
   const res = await fetch(`/@fs${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   const content = await res.text();
-  return { path, content, mtime: null, encoding: "UTF-8", bom: false, guessed: false, size: content.length };
+  return { path, content, mtime: 0, encoding: "UTF-8", bom: false, guessed: false, size: content.length };
 }
 
 export const host = {
@@ -73,6 +73,9 @@ export const host = {
 
   reportState: (paths: string[], unsaved: boolean): Promise<void> =>
     inTauri ? invoke("report_state", { paths, unsaved }) : Promise.resolve(),
+
+  setFormatMenu: (format: boolean, minify: boolean): Promise<void> =>
+    inTauri ? invoke("set_format_menu", { format, minify }) : Promise.resolve(),
 
   allowAssets: (paths: string[]): Promise<void> =>
     inTauri ? invoke("allow_assets", { paths }) : Promise.resolve(),
@@ -101,7 +104,7 @@ export const host = {
     inTauri ? invoke("delete_draft", { path }) : Promise.resolve(),
 
   fileMtime: (path: string): Promise<number | null> =>
-    inTauri ? invoke("file_mtime", { path }) : Promise.resolve(null),
+    inTauri ? invoke("file_mtime", { path }) : Promise.resolve(import.meta.env.DEV ? 0 : null),
 
   quit: () => (inTauri ? invoke("quit") : Promise.resolve()),
 
