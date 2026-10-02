@@ -6,7 +6,7 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { open as openDialog, save as saveDialog, message, ask } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog, message, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 export const inTauri = "__TAURI_INTERNALS__" in window;
@@ -96,13 +96,14 @@ export const host = {
     return "cancel";
   },
 
+  /** The file changed on disk while there are edits here: 好 = reload, 取消 = keep mine. */
   async confirmReload(name: string): Promise<boolean> {
     if (!inTauri) return confirm(`“${name}”已在外部修改，重新载入？`);
-    return ask("重新载入会丢弃你在这里未保存的修改。", {
+    return confirmDialog("点“好”载入磁盘上的新版本，并丢弃你在这里未保存的修改；点“取消”保留你的版本。", {
       title: `“${name}”已在其他地方被修改`,
       kind: "warning",
-      okLabel: "重新载入",
-      cancelLabel: "保留我的版本",
+      okLabel: "好",
+      cancelLabel: "取消",
     });
   },
 
