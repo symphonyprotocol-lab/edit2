@@ -284,7 +284,8 @@ button { font: inherit; color: inherit; }
   font-weight: 700;
   letter-spacing: -0.03em;
 }
-.wordmark b { color: var(--accent); }
+/* The "2" sits raised, as in the app icon (e²). */
+.wordmark b { color: var(--accent); font-size: 0.62em; vertical-align: 0.62em; margin-left: 0.04em; }
 .tagline { color: var(--ink-3); font-size: 13px; margin: 6px 0 26px; }
 .actions { display: flex; gap: 10px; justify-content: center; }
 .btn {
