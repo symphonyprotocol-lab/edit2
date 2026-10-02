@@ -17,6 +17,23 @@ export interface FileData {
   path: string;
   content: string;
   mtime: number | null;
+  /** Encoding it was decoded with (encoding_rs name, e.g. "UTF-8", "GBK"). */
+  encoding: string;
+  /** It starts with a byte order mark. */
+  bom: boolean;
+  /** The encoding was detected from little evidence. */
+  guessed: boolean;
+  size: number;
+}
+
+/** A write refused because the encoding cannot represent some characters. */
+export class UnmappableError extends Error {}
+
+/** A read refused because the file is very large; retry with `force`. */
+export class TooLargeError extends Error {
+  constructor(public size: number) {
+    super("too large");
+  }
 }
 
 export interface InitData {
@@ -45,7 +62,8 @@ async function devRead(path: string): Promise<FileData> {
   if (!import.meta.env.DEV) throw new Error("需要在 Tauri 中运行");
   const res = await fetch(`/@fs${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return { path, content: await res.text(), mtime: null };
+  const content = await res.text();
+  return { path, content, mtime: null, encoding: "UTF-8", bom: false, guessed: false, size: content.length };
 }
 
 export const host = {
@@ -59,10 +77,25 @@ export const host = {
   allowAssets: (paths: string[]): Promise<void> =>
     inTauri ? invoke("allow_assets", { paths }) : Promise.resolve(),
 
-  readFile: (path: string): Promise<FileData> => (inTauri ? invoke("read_file", { path }) : devRead(path)),
+  /** Read a text file; `encoding` skips detection, `force` opens a very large file. */
+  async readFile(path: string, opts: { encoding?: string; force?: boolean } = {}): Promise<FileData> {
+    if (!inTauri) return devRead(path);
+    try {
+      return await invoke<FileData>("read_file", { path, encoding: opts.encoding ?? null, force: opts.force ?? false });
+    } catch (err) {
+      const m = /^TOO_LARGE:(\d+)$/.exec(String(err));
+      throw m ? new TooLargeError(Number(m[1])) : err;
+    }
+  },
 
-  writeFile: (path: string, content: string): Promise<Written> =>
-    inTauri ? invoke("write_file", { path, content }) : Promise.resolve({ path, mtime: null }),
+  async writeFile(path: string, content: string, encoding = "UTF-8", bom = false): Promise<Written> {
+    if (!inTauri) return { path, mtime: null };
+    try {
+      return await invoke<Written>("write_file", { path, content, encoding, bom });
+    } catch (err) {
+      throw String(err) === "UNMAPPABLE" ? new UnmappableError("unmappable") : err;
+    }
+  },
 
   deleteDraft: (path: string): Promise<void> =>
     inTauri ? invoke("delete_draft", { path }) : Promise.resolve(),
@@ -118,6 +151,31 @@ export const host = {
       okLabel: "好",
       cancelLabel: "取消",
     });
+  },
+
+  async confirmLarge(name: string, size: string): Promise<boolean> {
+    if (!inTauri) return confirm(`“${name}”有 ${size}，以只读方式打开？`);
+    return confirmDialog("文件很大，为避免卡顿将以只读方式打开：不能编辑，也不显示预览。", {
+      title: `“${name}”有 ${size}`,
+      kind: "warning",
+      okLabel: "以只读方式打开",
+      cancelLabel: "取消",
+    });
+  },
+
+  /** Some characters cannot be written in the file's encoding. */
+  async confirmUnmappable(name: string, encoding: string): Promise<"utf8" | "keep"> {
+    if (!inTauri) return confirm(`“${name}”有 ${encoding} 无法表示的字符，改存为 UTF-8？`) ? "utf8" : "keep";
+    const ok = await confirmDialog(
+      `文件里有 ${encoding} 无法表示的字符（例如 emoji），按原编码保存会丢失它们。改存为 UTF-8，或者继续编辑并删掉这些字符。`,
+      { title: `“${name}”无法用 ${encoding} 保存`, kind: "warning", okLabel: "改存为 UTF-8", cancelLabel: "继续编辑" },
+    );
+    return ok ? "utf8" : "keep";
+  },
+
+  async ask(title: string, body: string, okLabel: string): Promise<boolean> {
+    if (!inTauri) return confirm(`${title}\n${body}`);
+    return confirmDialog(body, { title, kind: "warning", okLabel, cancelLabel: "取消" });
   },
 
   async alert(title: string, body: string) {

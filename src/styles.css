@@ -481,6 +481,8 @@ button { font: inherit; color: inherit; }
 .st-btn:hover, .st-btn[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
 .st-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .st-btn:empty { display: none; }
+#st-count.clickable { cursor: pointer; }
+#st-count.clickable:hover { color: var(--ink); }
 
 /* ---------- preview error ---------- */
 
@@ -501,7 +503,8 @@ button { font: inherit; color: inherit; }
   max-height: 7.5em;
   overflow: auto;
 }
-.preview-error[data-line]:not([data-line=""]) { cursor: pointer; }
+.preview-error[data-line]:not([data-line=""]), .preview-error[data-action] { cursor: pointer; }
+.preview-error[data-action] { border-left-color: var(--accent); }
 .preview-error[data-line]:not([data-line=""]):hover { color: var(--ink); }
 
 /* ---------- popup menu ---------- */

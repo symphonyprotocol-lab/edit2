@@ -9,6 +9,7 @@ import {
   wrapSlot,
   wrapExtension,
 } from "./editor";
+import { ENCODINGS, encodingName, formatSize, LARGE_FILE } from "./encodings";
 import {
   allFormats,
   extensionOf,
@@ -21,7 +22,7 @@ import {
   type PreviewRenderer,
   type RenderResult,
 } from "./formats";
-import { host, inTauri, isMac, type DialogFilter } from "./host";
+import { host, inTauri, isMac, TooLargeError, UnmappableError, type DialogFilter, type FileData } from "./host";
 import { TabBar } from "./tabs";
 import { showMenu, closeMenu, type MenuEntry } from "./popup";
 
@@ -36,6 +37,7 @@ const posEl = $("st-pos");
 const countEl = $("st-count");
 const saveEl = $("st-save");
 const formatEl = $("st-format");
+const encodingEl = $("st-encoding");
 const previewErrorEl = $("preview-error");
 const toastEl = $("toast");
 
@@ -92,6 +94,19 @@ interface Tab {
   format: FormatPlugin;
   /** Soft-wrap long lines. */
   wrap: boolean;
+  /** Encoding the file is written in, and whether it has a byte order mark. */
+  encoding: string;
+  bom: boolean;
+  /** The encoding was detected from little evidence. */
+  guessed: boolean;
+  /** The text cannot be written in `encoding`; auto-save is on hold. */
+  unmappable: boolean;
+  /** Big enough that preview and counting only run on request. */
+  large: boolean;
+  /** Too big to edit: opened read-only. */
+  readOnly: boolean;
+  /** For a large file, the user asked for the preview / counts. */
+  previewWanted: boolean;
 }
 
 const AUTOSAVE_DELAY = 800;
@@ -192,10 +207,17 @@ function createTab(text = "", started = true, format = formatOf(null)): Tab {
     previewTop: 0,
     format,
     wrap: true,
+    encoding: "UTF-8",
+    bom: false,
+    guessed: false,
+    unmappable: false,
+    large: false,
+    readOnly: false,
+    previewWanted: false,
   };
 }
 
-function makeState(text: string, format: FormatPlugin, wrap: boolean) {
+function makeState(text: string, format: FormatPlugin, wrap: boolean, readOnly = false) {
   loadLanguage(format);
   return EditorState.create({
     doc: text,
@@ -203,7 +225,7 @@ function makeState(text: string, format: FormatPlugin, wrap: boolean) {
       language: languages.get(format.id) ?? [],
       extras: format.editorExtras ?? [],
       wrap,
-      readOnly: false,
+      readOnly,
     }),
   });
 }
@@ -268,7 +290,7 @@ function isPristine(tab = doc) {
 
 /** Something the user must deal with: a failed save or a deleted file. */
 function needsAttention(tab: Tab) {
-  return tab.failed || tab.missing;
+  return tab.failed || tab.missing || tab.unmappable;
 }
 
 let reported = "";
@@ -334,7 +356,13 @@ function refreshChrome() {
   }
 
   saveEl.className = "";
-  if (doc.missing) {
+  if (doc.readOnly) {
+    saveEl.textContent = "只读 · 文件过大";
+  } else if (doc.unmappable) {
+    saveEl.textContent = `无法用 ${encodingName(doc.encoding, doc.bom)} 保存`;
+    saveEl.className = "warn";
+    saveEl.title = "有字符无法用这个编码表示：删掉它们，或在右侧的编码菜单里改用 UTF-8";
+  } else if (doc.missing) {
     saveEl.textContent = "文件已被移除";
     saveEl.className = "warn";
   } else if (doc.failed) {
@@ -353,6 +381,8 @@ function refreshChrome() {
   }
 
   formatEl.textContent = doc.format.label;
+  encodingEl.textContent = encodingName(doc.encoding, doc.bom) + (doc.guessed ? "?" : "");
+  encodingEl.title = doc.guessed ? "编码是根据很少的内容推测的，乱码时可换一种编码重新打开" : "文件编码";
   app.classList.toggle("no-preview", !doc.format.preview);
 
   renderTabs();
@@ -376,6 +406,11 @@ function scheduleCount() {
 }
 
 function updateCount() {
+  countEl.classList.toggle("clickable", doc.large && !doc.previewWanted);
+  if (doc.large && !doc.previewWanted) {
+    countEl.textContent = "大文件 · 点击统计";
+    return;
+  }
   const sel = view.state.selection.main;
   const picked = mode !== "read" && !sel.empty ? view.state.sliceDoc(sel.from, sel.to) : null;
   countEl.textContent = doc.format.stats(view.state.doc.toString(), picked);
@@ -409,6 +444,7 @@ let renderSeq = 0;
 function schedulePreview() {
   previewStale = true;
   if (mode === "write") return;
+  if (doc.large) return void showLargeNotice();
   clearTimeout(previewTimer);
   previewTimer = window.setTimeout(renderPreview, view.state.doc.length > 200_000 ? 400 : 90);
 }
@@ -487,6 +523,7 @@ function previewContext(seq: number, tab: Tab): PreviewContext {
 }
 
 function showPreviewError(error: RenderResult["error"]) {
+  delete previewErrorEl.dataset.action;
   previewErrorEl.hidden = !error;
   if (!error) return;
   previewErrorEl.textContent = error.line ? `第 ${error.line} 行：${error.message}` : error.message;
@@ -495,8 +532,24 @@ function showPreviewError(error: RenderResult["error"]) {
 }
 
 previewErrorEl.addEventListener("click", () => {
+  if (previewErrorEl.dataset.action === "render") {
+    doc.previewWanted = true;
+    renderPreview().then(() => {
+      // Later edits do not re-render on their own.
+      if (doc.large) doc.previewWanted = false;
+    });
+    return;
+  }
   const line = previewErrorEl.dataset.line;
   if (line) goToLine(Number(line));
+});
+
+countEl.addEventListener("click", () => {
+  if (!doc.large || doc.previewWanted) return;
+  doc.previewWanted = true;
+  updateCount();
+  doc.previewWanted = false;
+  countEl.classList.remove("clickable");
 });
 
 function setAnchors(list: { line: number; el: HTMLElement }[]) {
@@ -514,12 +567,32 @@ function loadRenderer(format: FormatPlugin): PreviewRenderer | Promise<PreviewRe
   );
 }
 
+/** Large files: say the preview is paused and offer to render it. */
+function showLargeNotice() {
+  const empty = !preview.childElementCount;
+  showPreviewError({
+    message: empty
+      ? `文件较大（${formatSize(doc.large ? textOf(doc).length : 0)}），预览已暂停。点击这里渲染预览。`
+      : "大文件的预览不随编辑自动更新。点击这里刷新。",
+  });
+  previewErrorEl.dataset.action = "render";
+}
+
 async function renderPreview() {
   clearTimeout(previewTimer);
-  previewStale = false;
   const seq = ++renderSeq;
   const tab = doc;
   const format = tab.format;
+  if (tab.large && !tab.previewWanted && format.preview) {
+    if (previewFormat !== format) {
+      previewFormat = format;
+      preview.replaceChildren();
+      preview.className = `preview fmt-${format.id}`;
+      setAnchors([]);
+    }
+    return showLargeNotice();
+  }
+  previewStale = false;
 
   if (previewFormat !== format) {
     if (previewFormat) renderers.get(previewFormat.id)?.reset?.();
@@ -791,6 +864,74 @@ function formatMenu(): MenuEntry[] {
 
 formatEl.addEventListener("click", () => showMenu(formatEl, formatMenu()));
 
+function encodingMenu(): MenuEntry[] {
+  const tab = doc;
+  const entries: MenuEntry[] = [{ heading: "用其他编码重新打开" }];
+  for (const e of ENCODINGS.filter((e) => !e.bom || e.encoding !== "UTF-8")) {
+    entries.push({
+      label: e.label,
+      disabled: !tab.path,
+      checked: tab.encoding.toLowerCase() === e.encoding.toLowerCase(),
+      run: () => reopenWithEncoding(tab, e.encoding),
+    });
+  }
+  entries.push("-", { heading: "以其他编码保存" });
+  for (const e of ENCODINGS) {
+    entries.push({
+      label: e.label,
+      disabled: tab.readOnly,
+      checked: tab.encoding.toLowerCase() === e.encoding.toLowerCase() && tab.bom === e.bom,
+      run: () => saveWithEncoding(tab, e.encoding, e.bom),
+    });
+  }
+  return entries;
+}
+
+encodingEl.addEventListener("click", () => showMenu(encodingEl, encodingMenu()));
+
+/** Read the file again, decoding it as `encoding` (detection guessed wrong). */
+async function reopenWithEncoding(tab: Tab, encoding: string) {
+  if (!tab.path) return;
+  await autosave(tab);
+  if (tab.dirty && !(await host.ask(`用 ${encoding} 重新打开“${tabName(tab)}”？`, "未保存的修改会丢失。", "重新打开"))) {
+    return;
+  }
+  let data: FileData;
+  try {
+    data = await host.readFile(tab.path, { encoding, force: tab.readOnly });
+  } catch (err) {
+    return host.alert("无法重新打开", `${tab.path}\n\n${err}`);
+  }
+  if (tab !== doc) activate(tab);
+  clearTimeout(tab.autosaveTimer);
+  replaceContent(data.content);
+  takeFileData(tab, data);
+  tab.saved = view.state.doc;
+  tab.dirty = tab.failed = tab.unmappable = false;
+  refreshChrome();
+  if (mode !== "write") renderPreview();
+}
+
+/** Write the file in another encoding from now on. */
+async function saveWithEncoding(tab: Tab, encoding: string, bom: boolean) {
+  const before = [tab.encoding, tab.bom] as const;
+  tab.encoding = encoding;
+  tab.bom = bom;
+  tab.guessed = false;
+  if (!tab.path) return refreshChrome(); // used when the draft is saved as a file
+  try {
+    tab.mtime = (await writeTo(tab, tab.path)).mtime;
+    tab.unmappable = false;
+    toast(`已用 ${encodingName(encoding, bom)} 保存`);
+  } catch (err) {
+    [tab.encoding, tab.bom] = before;
+    const why = err instanceof UnmappableError ? `有字符无法用 ${encodingName(encoding, bom)} 表示。` : String(err);
+    await host.alert("无法改用这个编码", why);
+  } finally {
+    refreshChrome();
+  }
+}
+
 function toggleWrap() {
   doc.wrap = !doc.wrap;
   view.dispatch({ effects: wrapSlot.reconfigure(wrapExtension(doc.wrap)) });
@@ -906,9 +1047,17 @@ async function openPath(path: string) {
   if (opening.has(path)) return;
   opening.add(path);
   try {
-    let data;
+    let data: FileData;
+    let readOnly = false;
     try {
-      data = await host.readFile(path);
+      try {
+        data = await host.readFile(path);
+      } catch (err) {
+        if (!(err instanceof TooLargeError)) throw err;
+        if (!(await host.confirmLarge(basename(path), formatSize(err.size)))) return;
+        data = await host.readFile(path, { force: true });
+        readOnly = true;
+      }
     } catch (err) {
       forgetRecent(path);
       await host.alert("无法打开文件", `${path}\n\n${err}`);
@@ -920,20 +1069,21 @@ async function openPath(path: string) {
     const draft = inDrafts(data.path);
     const format = formatOf(data.path);
     await loadLanguage(format);
-    const state = makeState(data.content, format, true);
+    const state = makeState(data.content, format, true, readOnly);
     const fill = (tab: Tab) => {
       tab.path = draft ? null : data.path;
       tab.draft = draft ? data.path : null;
-      tab.mtime = data.mtime;
       tab.state = state;
       tab.saved = state.doc;
-      tab.eol = data.content.includes("\r\n") ? "\r\n" : "\n";
       tab.started = true;
       tab.missing = tab.dirty = tab.failed = false;
       tab.editorScroll = null;
       tab.previewTop = 0;
       tab.format = format;
       tab.wrap = true;
+      takeFileData(tab, data);
+      tab.readOnly = readOnly;
+      tab.unmappable = false;
     };
 
     if (isPristine()) {
@@ -950,6 +1100,17 @@ async function openPath(path: string) {
   } finally {
     opening.delete(path);
   }
+}
+
+/** Encoding and size facts that come with a read. */
+function takeFileData(tab: Tab, data: FileData) {
+  tab.mtime = data.mtime;
+  tab.eol = data.content.includes("\r\n") ? "\r\n" : "\n";
+  tab.encoding = data.encoding;
+  tab.bom = data.bom;
+  tab.guessed = data.guessed;
+  tab.large = data.size >= LARGE_FILE;
+  tab.previewWanted = false;
 }
 
 /** Dialog filters: every supported format first (the default), then each one. */
@@ -981,13 +1142,14 @@ function serial<T>(tab: Tab, job: () => Promise<T>): Promise<T> {
 async function writeNow(tab: Tab, target: string) {
   const snapshot = textOf(tab);
   try {
-    const written = await host.writeFile(target, snapshot.sliceString(0, snapshot.length, tab.eol));
+    const written = await host.writeFile(target, snapshot.sliceString(0, snapshot.length, tab.eol), tab.encoding, tab.bom);
     tab.saved = snapshot;
     tab.failed = false;
     tab.dirty = !textOf(tab).eq(snapshot);
     return written;
   } catch (err) {
-    tab.failed = true;
+    if (err instanceof UnmappableError) tab.unmappable = true;
+    else tab.failed = true;
     throw err;
   } finally {
     refreshChrome();
@@ -1013,7 +1175,7 @@ function newDraftPath() {
  */
 async function autosave(tab: Tab): Promise<boolean> {
   clearTimeout(tab.autosaveTimer);
-  if (!tab.dirty) return true;
+  if (!tab.dirty || tab.readOnly) return true;
   try {
     if (tab.path) {
       // Never resurrect a deleted file or overwrite someone else's edits
@@ -1041,11 +1203,27 @@ async function autosave(tab: Tab): Promise<boolean> {
       tab.draft ??= newDraftPath();
       await writeTo(tab, tab.draft);
     }
+    tab.unmappable = false;
     return !tab.dirty;
-  } catch {
+  } catch (err) {
+    if (err instanceof UnmappableError) offerUtf8(tab);
     return false;
   } finally {
     refreshChrome();
+  }
+}
+
+/** Auto-save hit characters the encoding lacks: ask once, then hold off quietly. */
+const offeredUtf8 = new WeakSet<Tab>();
+async function offerUtf8(tab: Tab) {
+  if (offeredUtf8.has(tab)) return;
+  offeredUtf8.add(tab);
+  if ((await host.confirmUnmappable(tabName(tab), encodingName(tab.encoding, tab.bom))) === "utf8") {
+    tab.encoding = "UTF-8";
+    tab.bom = false;
+    tab.guessed = false;
+    tab.unmappable = false;
+    autosave(tab);
   }
 }
 
@@ -1068,8 +1246,15 @@ async function save(as = false): Promise<boolean> {
   try {
     written = await writeTo(tab, target);
   } catch (err) {
-    await host.alert("保存失败", `${target}\n\n${err}`);
-    return false;
+    if (!(err instanceof UnmappableError)) {
+      await host.alert("保存失败", `${target}\n\n${err}`);
+      return false;
+    }
+    if ((await host.confirmUnmappable(tabName(tab), encodingName(tab.encoding, tab.bom))) === "keep") return false;
+    tab.encoding = "UTF-8";
+    tab.bom = false;
+    tab.unmappable = false;
+    return save(as);
   }
   const renamed = written.path !== tab.path;
   const draft = tab.draft;
@@ -1123,29 +1308,15 @@ async function checkDisk() {
       return;
     }
     const before = view.state.doc;
-    const data = await host.readFile(path);
+    const data = await host.readFile(path, { encoding: tab.encoding, force: tab.readOnly });
     // Give up if anything moved meanwhile: another tab, a write, or typing
     // (the next check will then ask instead of overwriting).
     if (doc !== tab || tab.path !== path || tab.busy || !view.state.doc.eq(before)) return;
     clearTimeout(tab.autosaveTimer);
-    const current = before.toString();
-    if (data.content !== current) {
-      // Replace only the span that differs so the cursor and scroll stay put.
-      const next = data.content;
-      let start = 0;
-      while (start < current.length && start < next.length && current[start] === next[start]) start++;
-      let end = 0;
-      while (
-        end < current.length - start && end < next.length - start &&
-        current[current.length - 1 - end] === next[next.length - 1 - end]
-      ) end++;
-      view.dispatch({
-        changes: { from: start, to: current.length - end, insert: next.slice(start, next.length - end) },
-      });
-    }
+    replaceContent(data.content);
     tab.saved = view.state.doc;
     tab.mtime = data.mtime;
-    tab.dirty = tab.failed = false;
+    tab.dirty = tab.failed = tab.unmappable = false;
     refreshChrome();
     if (mode !== "write") renderPreview();
   } catch {
@@ -1153,6 +1324,22 @@ async function checkDisk() {
   } finally {
     checking = false;
   }
+}
+
+/** Replace the editor text, changing only the span that differs so the cursor and scroll stay put. */
+function replaceContent(next: string) {
+  const current = view.state.doc.toString();
+  if (next === current) return;
+  let start = 0;
+  while (start < current.length && start < next.length && current[start] === next[start]) start++;
+  let end = 0;
+  while (
+    end < current.length - start && end < next.length - start &&
+    current[current.length - 1 - end] === next[next.length - 1 - end]
+  ) end++;
+  view.dispatch({
+    changes: { from: start, to: current.length - end, insert: next.slice(start, next.length - end) },
+  });
 }
 
 /**

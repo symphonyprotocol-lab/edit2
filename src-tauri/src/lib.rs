@@ -8,6 +8,7 @@ use std::time::UNIX_EPOCH;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
+mod codec;
 #[cfg(target_os = "macos")]
 mod mac_quit;
 #[cfg(target_os = "macos")]
@@ -75,12 +76,23 @@ fn staged_drafts(dir: &Path) -> Vec<String> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct FileData {
     /// Canonical path, so the frontend can tell two spellings of one file apart.
     path: String,
     content: String,
     mtime: Option<u64>,
+    /// Encoding the file was decoded with, to write it back the same way.
+    encoding: String,
+    /// The file starts with a byte order mark.
+    bom: bool,
+    /// The encoding was detected from little evidence.
+    guessed: bool,
+    size: u64,
 }
+
+/// Files above this size only open after the user confirms (read-only).
+const CONFIRM_SIZE: u64 = 50 * 1024 * 1024;
 
 fn mtime_of(path: &Path) -> Option<u64> {
     let modified = std::fs::metadata(path).ok()?.modified().ok()?;
@@ -318,26 +330,50 @@ fn report_state(
     }
 }
 
+/// Read a text file, detecting its encoding unless one is given. A file over
+/// `CONFIRM_SIZE` fails with `TOO_LARGE:<bytes>` unless `force` is set.
 #[tauri::command]
-fn read_file(path: String) -> Result<FileData, String> {
+fn read_file(path: String, encoding: Option<String>, force: Option<bool>) -> Result<FileData, String> {
     let p = Path::new(&path);
-    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
-    let mut content =
-        String::from_utf8(bytes).map_err(|_| "文件不是 UTF-8 编码的文本".to_string())?;
-    if content.starts_with('\u{feff}') {
-        content.remove(0);
+    let size = std::fs::metadata(p).map_err(|e| e.to_string())?.len();
+    if size > CONFIRM_SIZE && !force.unwrap_or(false) {
+        return Err(format!("TOO_LARGE:{size}"));
     }
+    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+    let decoded = match encoding {
+        Some(label) => codec::decode_as(&bytes, &label).ok_or_else(|| format!("未知的编码：{label}"))?,
+        None => codec::decode(&bytes).map_err(|e| match e {
+            codec::DecodeError::Binary => "这不是文本文件".to_string(),
+            codec::DecodeError::Unknown => "无法识别文件的编码".to_string(),
+        })?,
+    };
     Ok(FileData {
         path: normalize(&path),
-        content,
+        content: decoded.text,
         mtime: mtime_of(p),
+        encoding: decoded.encoding.to_string(),
+        bom: decoded.bom,
+        guessed: decoded.guessed,
+        size,
     })
 }
 
+/// Write `content` in `encoding` (UTF-8 by default). Fails with `UNMAPPABLE`,
+/// writing nothing, if the encoding cannot represent every character.
 #[tauri::command]
-fn write_file(path: String, content: String) -> Result<Written, String> {
+fn write_file(
+    path: String,
+    content: String,
+    encoding: Option<String>,
+    bom: Option<bool>,
+) -> Result<Written, String> {
     let p = Path::new(&path);
-    write_atomic(p, content.as_bytes()).map_err(|e| e.to_string())?;
+    let label = encoding.as_deref().unwrap_or("UTF-8");
+    let bytes = codec::encode(&content, label, bom.unwrap_or(false)).map_err(|e| match e {
+        codec::EncodeError::Unmappable => "UNMAPPABLE".to_string(),
+        codec::EncodeError::UnknownEncoding => format!("未知的编码：{label}"),
+    })?;
+    write_atomic(p, &bytes).map_err(|e| e.to_string())?;
     Ok(Written {
         path: normalize(&path),
         mtime: mtime_of(p),
