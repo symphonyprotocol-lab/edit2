@@ -6,6 +6,10 @@ edit2 was called mdit and only edited Markdown. It now opens Markdown, plain tex
 
 Built with Tauri 2 and CodeMirror 6. The layout mockup is in [design/mockup.html](design/mockup.html).
 
+## Download
+
+Get the latest `.dmg` from [Releases](https://github.com/symphonyprotocol-lab/edit2/releases). It runs on Apple silicon and Intel Macs (macOS 10.13 or later). The app is not signed with an Apple Developer ID, so the first time, right-click edit2 in Applications and choose Open, or run `xattr -dr com.apple.quarantine /Applications/edit2.app`.
+
 ## Formats
 
 | Format | Extensions | Preview | Format / minify |
@@ -68,10 +72,13 @@ Built with Tauri 2 and CodeMirror 6. The layout mockup is in [design/mockup.html
 Requirements: Node 20+, Rust stable and the [Tauri prerequisites](https://tauri.app/start/prerequisites/).
 
 ```bash
+git clone git@github.com:symphonyprotocol-lab/edit2.git
+cd edit2
 npm install
 npm run tauri dev                         # run the app
 npm run tauri dev -- -- path/to/file.md   # open a file at launch
 npm run tauri build                       # build release bundles into src-tauri/target/release/bundle
+npm run tauri build -- --target universal-apple-darwin   # Apple silicon + Intel (needs `rustup target add x86_64-apple-darwin`)
 cd src-tauri && cargo test                # encoding, preview protocol and migration tests
 ```
 
