@@ -12,7 +12,7 @@ Built with Tauri 2 and CodeMirror 6. The layout mockup is in [design/mockup.html
 
 Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edit2/releases). Neither build is code-signed.
 
-- **macOS**: the `.dmg` runs on Apple silicon and Intel Macs (macOS 10.13 or later). The first time, right-click edit2 in Applications and choose Open, or run `xattr -dr com.apple.quarantine /Applications/edit2.app`.
+- **macOS**: the `.dmg` runs on Apple silicon and Intel Macs (macOS 10.13 or later). It is signed with a Developer ID and notarized by Apple.
 - **Windows**: download and run `edit2_<version>_x64-setup.exe` (64-bit Windows 10 or later). It installs for the current user without administrator rights, and installs WebView2 if it is missing. If SmartScreen stops the unsigned installer, choose More info → Run anyway. edit2 becomes the default app for Markdown only; the other formats are left with their current app and appear under Open with, so your browser keeps `.html` and `.svg` and your PDF reader, image viewer and Office keep their files.
 
 ### Updates

@@ -12,7 +12,7 @@ edit2 的前身是 mdit，原来只能编辑 Markdown。现在可以打开 Markd
 
 从 [Releases](https://github.com/symphonyprotocol-lab/edit2/releases) 下载最新版本。两个平台的安装包都没有代码签名。
 
-- **macOS**：`.dmg` 同时支持 Apple 芯片和 Intel Mac，需要 macOS 10.13 或更高版本。第一次打开时，在「应用程序」里右键 edit2 →「打开」，或者执行 `xattr -dr com.apple.quarantine /Applications/edit2.app`。
+- **macOS**：`.dmg` 同时支持 Apple 芯片和 Intel Mac，需要 macOS 10.13 或更高版本，已经用 Developer ID 签名并通过 Apple 公证。
 - **Windows**：下载 `edit2_<版本>_x64-setup.exe` 并运行，需要 64 位 Windows 10 或更高版本。安装到当前用户下，不需要管理员权限；系统里没有 WebView2 时，安装程序会自动安装。安装程序没有代码签名，SmartScreen 拦截时点「更多信息」→「仍要运行」。edit2 只会注册为 Markdown 的默认打开方式，其他格式不改动默认程序，需要时右键文件 →「打开方式」选择 edit2，`.html`、`.svg` 仍由原来的浏览器打开，PDF、图片和 Office 文件仍由原来的程序打开。
 
 ### 更新
