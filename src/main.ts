@@ -19,7 +19,6 @@ import {
 import { ENCODINGS, encodingName, formatSize, LARGE_FILE } from "./encodings";
 import {
   allFormats,
-  extensionOf,
   formatById,
   formatFor,
   isKnownFile,
@@ -1172,14 +1171,33 @@ function formatMenu(): MenuEntry[] {
   const byExtension = formatFor(tab.path);
   const overridden = !!key && overrides()[key] !== undefined;
   const entries: MenuEntry[] = [{ heading: "显示为" }];
+  const item = (format: FormatPlugin): MenuEntry => ({
+    label: format.label,
+    checked: tab.format === format,
+    run: () => {
+      if (key) rememberOverride(key, format === byExtension && tab.path ? null : format);
+      setFormat(tab, format);
+    },
+  });
+  // A group (the code languages) is one entry here that opens its own list.
+  const groups = new Map<string, FormatPlugin[]>();
   for (const format of allFormats()) {
-    entries.push({
-      label: format.label,
-      checked: tab.format === format,
-      run: () => {
-        if (key) rememberOverride(key, format === byExtension && tab.path ? null : format);
-        setFormat(tab, format);
-      },
+    if (!format.group) {
+      entries.push(item(format));
+      continue;
+    }
+    const members = groups.get(format.group);
+    if (members) {
+      members.push(format);
+      continue;
+    }
+    const list = [format];
+    groups.set(format.group, list);
+    const current = tab.format.group === format.group;
+    entries.push("-", {
+      label: current ? `${format.group}（${tab.format.label}）…` : `${format.group}…`,
+      checked: current,
+      run: () => showMenu(formatEl, [{ heading: `${format.group}：显示为` }, ...list.map(item)]),
     });
   }
   if (overridden && tab.path) {
@@ -1556,7 +1574,13 @@ function takeFileData(tab: Tab, data: FileData) {
 /** Dialog filters: every supported format first (the default), then each one. */
 function dialogFilters(first?: FormatPlugin): DialogFilter[] {
   const formats = [...allFormats()].sort((a, b) => (a === first ? -1 : b === first ? 1 : 0));
-  const each = formats.map((f) => ({ name: f.label, extensions: f.extensions }));
+  const each: DialogFilter[] = [];
+  for (const f of formats) {
+    const name = f.group ?? f.label;
+    const same = f.group ? each.find((e) => e.name === name) : undefined;
+    if (same) same.extensions.push(...f.extensions);
+    else each.push({ name, extensions: [...f.extensions] });
+  }
   if (first) return each;
   return [{ name: "所有支持的文件", extensions: formats.flatMap((f) => f.extensions) }, ...each];
 }
@@ -1875,8 +1899,8 @@ async function save(as = false): Promise<boolean> {
   refreshChrome();
   if (renamed) {
     toast(`已保存为 ${basename(written.path)}`);
-    // A new extension may mean another format; otherwise relative paths may now resolve.
-    const format = extensionOf(written.path) === extensionOf(before) ? tab.format : formatOf(written.path);
+    // A new name may mean another format; otherwise relative paths may now resolve.
+    const format = formatFor(written.path) === formatFor(before) ? tab.format : formatOf(written.path);
     if (format !== tab.format) setFormat(tab, format);
     else if (tab === doc && mode !== "write") renderPreview();
   }
