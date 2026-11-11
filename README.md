@@ -1,5 +1,7 @@
 # edit2
 
+English | [简体中文](README.zh-CN.md)
+
 A quick editor for text files. Open a file, look at it, change it, close it. Each file you open becomes a tab in a single window. Open a folder and its tree appears in a sidebar on the left; without one there is no sidebar. The + button in the tab strip (or ⌘T) starts a new draft at any time.
 
 edit2 was called mdit and only edited Markdown. It now opens Markdown, plain text, JSON, YAML, TOML, XML, CSV and HTML, each with highlighting and (except plain text) a live preview, plus source code in about 40 languages. Each format is a built-in plugin, so adding another one does not touch the rest of the app.
@@ -11,7 +13,7 @@ Built with Tauri 2 and CodeMirror 6. The layout mockup is in [design/mockup.html
 Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edit2/releases). Neither build is code-signed.
 
 - **macOS**: the `.dmg` runs on Apple silicon and Intel Macs (macOS 10.13 or later). The first time, right-click edit2 in Applications and choose Open, or run `xattr -dr com.apple.quarantine /Applications/edit2.app`.
-- **Windows**：下载 `edit2_<版本>_x64-setup.exe` 并运行，需要 64 位 Windows 10 或更高版本。安装到当前用户下，不需要管理员权限；系统里没有 WebView2 时，安装程序会自动安装。安装程序没有代码签名，SmartScreen 拦截时点「更多信息」→「仍要运行」。edit2 只会注册为 Markdown 的默认打开方式，其他格式不改动默认程序，需要时右键文件 →「打开方式」选择 edit2，`.html`、`.svg` 仍由原来的浏览器打开。
+- **Windows**: download and run `edit2_<version>_x64-setup.exe` (64-bit Windows 10 or later). It installs for the current user without administrator rights, and installs WebView2 if it is missing. If SmartScreen stops the unsigned installer, choose More info → Run anyway. edit2 becomes the default app for Markdown only; the other formats are left with their current app and appear under Open with, so your browser keeps `.html` and `.svg`.
 
 ## Formats
 
