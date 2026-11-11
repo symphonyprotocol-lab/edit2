@@ -10,6 +10,7 @@
   <body>
     <div id="app" class="is-empty" data-mode="write">
       <header class="titlebar" data-tauri-drag-region>
+        <button type="button" class="tb-sidebar" id="btn-sidebar" title="显示/隐藏边栏" aria-label="显示/隐藏边栏" aria-controls="sidebar"></button>
         <div class="tb-side" data-tauri-drag-region></div>
         <div class="tb-title" data-tauri-drag-region>
           <span class="dirty-dot" aria-hidden="true"></span>
@@ -30,6 +31,18 @@
       </header>
 
       <main class="workspace">
+        <aside class="sidebar" id="sidebar" aria-label="文件夹">
+          <div class="sb-head">
+            <span class="sb-name" id="sb-name"></span>
+            <button type="button" class="sb-btn sb-more" id="sb-more" title="更多" aria-label="文件夹选项" aria-haspopup="menu" aria-expanded="false"></button>
+            <button type="button" class="sb-btn sb-close" id="sb-close" title="关闭文件夹" aria-label="关闭文件夹"></button>
+          </div>
+          <div class="sb-tree" id="sb-tree"></div>
+          <div class="sb-resizer" id="sb-resizer" role="separator" aria-orientation="vertical" aria-label="调整边栏宽度" title="拖动调整宽度，双击恢复默认"></div>
+        </aside>
+
+        <div class="panes" id="panes">
+        <div class="toast" id="toast" role="status"></div>
         <section class="empty" id="empty">
           <div class="empty-box">
             <div class="wordmark">edit<b>2</b></div>
@@ -42,7 +55,7 @@
               <h4>最近</h4>
               <ul id="recent-list"></ul>
             </div>
-            <p class="drop-hint">或者把文件拖到窗口任意位置</p>
+            <p class="drop-hint">或者把文件、文件夹拖到窗口任意位置 · <button type="button" class="link" id="btn-open-folder">打开文件夹…</button></p>
           </div>
         </section>
 
@@ -50,6 +63,7 @@
         <div class="pane preview-pane" id="preview-scroll">
           <div class="preview-error" id="preview-error" role="alert" hidden></div>
           <article class="preview" id="preview"></article>
+        </div>
         </div>
       </main>
 
@@ -63,7 +77,6 @@
       </footer>
 
       <div class="drop-overlay" aria-hidden="true"><span>松开以打开</span></div>
-      <div class="toast" id="toast" role="status"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

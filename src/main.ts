@@ -33,6 +33,7 @@ import {
 } from "./formats";
 import { host, inTauri, isMac, TooLargeError, UnmappableError, type DialogFilter, type FileData } from "./host";
 import { TabBar } from "./tabs";
+import { FolderTree } from "./sidebar";
 import { showMenu, closeMenu, type MenuEntry } from "./popup";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -49,6 +50,11 @@ const formatEl = $("st-format");
 const encodingEl = $("st-encoding");
 const previewErrorEl = $("preview-error");
 const toastEl = $("toast");
+const panesEl = $("panes");
+const sidebarEl = $("sidebar");
+const sbNameEl = $("sb-name");
+const sbMoreEl = $("sb-more");
+const sidebarBtn = $("btn-sidebar");
 
 // ---------- persisted preferences ----------
 
@@ -326,14 +332,20 @@ function needsAttention(tab: Tab) {
 }
 
 let reported = "";
+/**
+ * Until boot has asked the backend what to open, say nothing: an early report
+ * of "no tabs, no folder" would overwrite what a reloaded page gets back.
+ */
+let initialized = false;
 /** Tell the backend what this window holds (for file routing and quit). */
 function syncBackend(force = false): Promise<void> {
+  if (!initialized) return Promise.resolve();
   const paths = tabs.map((t) => t.path ?? t.draft).filter((p): p is string => !!p);
   const unsaved = tabs.some((t) => t.dirty || needsAttention(t));
-  const state = JSON.stringify([paths, unsaved]);
+  const state = JSON.stringify([paths, unsaved, folder]);
   if (!force && state === reported) return Promise.resolve();
   reported = state;
-  return host.reportState(paths, unsaved);
+  return host.reportState(paths, unsaved, folder);
 }
 
 const tabBar = new TabBar($("tab-list"), $("tab-new"), {
@@ -419,6 +431,8 @@ function refreshChrome() {
   app.classList.toggle("no-preview", !doc.format.preview);
 
   renderTabs();
+  tree.setActive(doc.path);
+  syncFolderMenu();
   syncBackend();
 }
 
@@ -1031,6 +1045,8 @@ function syncFormatMenu() {
 window.addEventListener("focus", () => {
   formatMenuState = "";
   syncFormatMenu();
+  folderMenuState = null;
+  syncFolderMenu();
 });
 
 formatEl.addEventListener("click", () => showMenu(formatEl, formatMenu()));
@@ -1211,11 +1227,15 @@ const tabFor = (path: string) => tabs.find((t) => t.path === path || t.draft ===
 const inDrafts = (path: string) => !!draftsDir && dirname(path) === draftsDir;
 const opening = new Set<string>();
 
-/** Open a file in a tab, or switch to the tab that already has it. New tabs go last. */
+/**
+ * Open a file in a tab, or switch to the tab that already has it, here or in
+ * another window (one file is edited in one place). New tabs go last.
+ */
 async function openPath(path: string) {
   const open = tabFor(path);
   if (open) return activate(open);
   if (opening.has(path)) return;
+  if (await host.focusIfOpen(path)) return;
   opening.add(path);
   try {
     let data: FileData;
@@ -1297,7 +1317,170 @@ async function openViaDialog() {
   // macOS merges filters into one allow-list (no "all files" choice), which
   // would hide text files without a known extension: offer every file there.
   const path = await host.pickFile(isMac ? [] : [...dialogFilters(), { name: "所有文件", extensions: ["*"] }]);
-  if (path) await openPath(path);
+  if (!path) return;
+  // A window showing a folder keeps to it: other files get a window of their own.
+  if (folder && inTauri) await host.openInNewWindow(path);
+  else await openPath(path);
+}
+
+// ---------- folder sidebar ----------
+
+/** The folder shown in the sidebar (canonical path), if any. */
+let folder: string | null = null;
+
+const tree = new FolderTree($("sb-tree"), {
+  list: (path, showHidden) => host.listDir(path, showHidden),
+  openFile: (path) => openPath(path),
+});
+
+const SIDEBAR_WIDTH = 240;
+const clampSidebar = (px: number) => Math.round(Math.max(160, Math.min(px, 600, window.innerWidth - 320)));
+
+function applySidebarWidth(px: number) {
+  app.style.setProperty("--sidebar-w", `${clampSidebar(px)}px`);
+}
+
+/** Show a folder in the sidebar. Quiet: the folder came from settings, not the user. */
+async function openFolder(path: string, quiet = false): Promise<boolean> {
+  const info = await host.statPath(path).catch(() => null);
+  if (!info?.dir) {
+    if (!quiet) await host.alert("无法打开文件夹", `${path}\n\n${info ? "这不是文件夹" : "文件夹不存在"}`);
+    return false;
+  }
+  try {
+    await tree.open(info.path);
+  } catch (err) {
+    if (!quiet) await host.alert("无法打开文件夹", `${info.path}\n\n${err}`);
+    return false;
+  }
+  folder = info.path;
+  sbNameEl.textContent = basename(folder);
+  sbNameEl.title = tildify(folder);
+  app.classList.add("has-folder");
+  setSidebarHidden(false);
+  // In the app the backend remembers every window's folder (via syncBackend).
+  if (!inTauri) prefs.set("folder", folder);
+  refreshChrome();
+  tree.setActive(doc.path);
+  // On the launch screen the tree is the natural next stop.
+  if (!doc.started) tree.focus();
+  return true;
+}
+
+function closeFolder() {
+  if (!folder) return;
+  if (!inTauri) prefs.set("folder", null);
+  folder = null;
+  tree.close();
+  app.classList.remove("has-folder");
+  refreshChrome();
+  if (doc.started && mode !== "read") view.focus();
+}
+
+async function openFolderViaDialog() {
+  const path = await host.pickFolder();
+  if (!path) return;
+  // Each window keeps its folder: another one opens in a new window.
+  if (folder && inTauri) await host.openInNewWindow(path);
+  else await openFolder(path);
+}
+
+function setSidebarHidden(hidden: boolean, remember = false) {
+  app.classList.toggle("sidebar-hidden", hidden);
+  sidebarBtn.setAttribute("aria-expanded", String(!hidden));
+  sidebarBtn.title = hidden ? "显示边栏" : "隐藏边栏";
+  if (remember) prefs.set("sidebarHidden", hidden);
+}
+
+function toggleSidebar() {
+  if (!folder) return toast("没有打开的文件夹");
+  const hide = !app.classList.contains("sidebar-hidden");
+  setSidebarHidden(hide, true);
+  if (!hide) tree.focus();
+  else if (doc.started && mode !== "read") view.focus();
+}
+
+function folderMenu(): MenuEntry[] {
+  return [
+    { label: "刷新", run: () => tree.refresh() },
+    {
+      label: "显示隐藏文件",
+      checked: tree.showHidden,
+      run: () => {
+        tree.setShowHidden(!tree.showHidden);
+        prefs.set("showHidden", tree.showHidden);
+      },
+    },
+    { label: isMac ? "在访达中显示" : "在资源管理器中显示", run: () => folder && host.reveal(folder) },
+    "-",
+    { label: "关闭文件夹", run: closeFolder },
+  ];
+}
+
+let folderMenuState: boolean | null = null;
+/** Keep the native menu's folder items in step with this window. */
+function syncFolderMenu() {
+  if (!document.hasFocus() && folderMenuState !== null) return;
+  if (folderMenuState === !!folder) return;
+  folderMenuState = !!folder;
+  host.setFolderMenu(folderMenuState);
+}
+
+sbMoreEl.addEventListener("click", () => showMenu(sbMoreEl, folderMenu()));
+$("sb-close").addEventListener("click", closeFolder);
+sidebarBtn.addEventListener("click", toggleSidebar);
+
+// Drag the right edge to resize; double-click for the default width.
+const resizer = $("sb-resizer");
+resizer.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const startX = e.clientX;
+  const startW = sidebarEl.getBoundingClientRect().width;
+  let width = startW;
+  resizer.setPointerCapture(e.pointerId);
+  sidebarEl.classList.add("resizing");
+  app.classList.add("resizing-sidebar");
+  const move = (ev: PointerEvent) => {
+    width = clampSidebar(startW + ev.clientX - startX);
+    applySidebarWidth(width);
+  };
+  const end = () => {
+    resizer.removeEventListener("pointermove", move);
+    resizer.removeEventListener("pointerup", end);
+    resizer.removeEventListener("pointercancel", end);
+    sidebarEl.classList.remove("resizing");
+    app.classList.remove("resizing-sidebar");
+    if (width !== startW) prefs.set("sidebarWidth", width);
+  };
+  resizer.addEventListener("pointermove", move);
+  resizer.addEventListener("pointerup", end);
+  resizer.addEventListener("pointercancel", end);
+});
+resizer.addEventListener("dblclick", () => {
+  applySidebarWidth(SIDEBAR_WIDTH);
+  prefs.set("sidebarWidth", SIDEBAR_WIDTH);
+});
+
+// Split view needs room for two panes: judge by the area beside the sidebar,
+// which is the whole window when there is none (760px, as before folders).
+// Beside the sidebar, panes may be a little narrower, so that the default
+// 920px window with a 240px sidebar still splits.
+new ResizeObserver(([entry]) => {
+  const sidebar = app.classList.contains("has-folder") && !app.classList.contains("sidebar-hidden");
+  app.classList.toggle("narrow", entry.contentRect.width < (sidebar ? 640 : 760));
+  anchorsMeasured = false;
+}).observe(panesEl);
+
+/**
+ * A path dropped on the window: files open here as tabs; a folder goes to
+ * this window's sidebar, or to a new window if this one already shows another.
+ */
+async function openAny(path: string) {
+  const info = await host.statPath(path).catch(() => null);
+  if (!info?.dir) return openPath(path);
+  if (folder && inTauri && info.path !== folder) await host.openInNewWindow(info.path);
+  else await openFolder(info.path);
 }
 
 // ---------- saving ----------
@@ -1538,6 +1721,9 @@ const commands: Record<string, () => unknown> = {
   new: newTab,
   new_tab: newTab,
   open: openViaDialog,
+  open_folder: openFolderViaDialog,
+  close_folder: closeFolder,
+  toggle_sidebar: toggleSidebar,
   save: () => doc.started && save(false),
   save_as: () => doc.started && save(true),
   reveal: () => doc.path && host.reveal(doc.path),
@@ -1591,7 +1777,7 @@ window.addEventListener(
     if (mod && handleShortcutsInPage && !e.altKey) {
       const k = e.key.toLowerCase();
       const id = e.shiftKey
-        ? ({ s: "save_as", r: "reveal", w: "close_window" } as Record<string, string>)[k] ??
+        ? ({ s: "save_as", r: "reveal", w: "close_window", o: "open_folder", e: "toggle_sidebar" } as Record<string, string>)[k] ??
           ({ BracketLeft: "prev_tab", BracketRight: "next_tab" } as Record<string, string>)[e.code]
         : ({
             n: "new", t: "new_tab", o: "open", s: "save", w: "close", q: "quit",
@@ -1605,9 +1791,11 @@ window.addEventListener(
         return;
       }
     }
-    // On the launch screen, typing anything starts a new document.
+    // On the launch screen, typing anything starts a new document (not while
+    // moving around the folder tree).
     if (
       !doc.started &&
+      !sidebarEl.contains(e.target as Node) &&
       !mod && !e.ctrlKey && !e.altKey &&
       e.key.length === 1 &&
       !(e.target instanceof HTMLButtonElement && e.key === " ")
@@ -1625,12 +1813,15 @@ for (const b of document.querySelectorAll<HTMLButtonElement>(".seg button")) {
 }
 $("btn-new").addEventListener("click", startNew);
 $("btn-open").addEventListener("click", openViaDialog);
+$("btn-open-folder").addEventListener("click", openFolderViaDialog);
 for (const k of document.querySelectorAll<HTMLElement>("kbd[data-key]")) {
   k.textContent = isMac ? `⌘${k.dataset.key}` : `Ctrl+${k.dataset.key}`;
 }
 previewScroll.tabIndex = -1;
 
 window.addEventListener("focus", checkDisk);
+// Pick up files added or removed while the window was in the background.
+window.addEventListener("focus", () => tree.refresh());
 // Leaving the window is a natural moment to have everything on disk.
 window.addEventListener("blur", () => autosave(doc));
 setInterval(() => document.hasFocus() && checkDisk(), 2500);
@@ -1640,6 +1831,9 @@ async function boot() {
   await prefs.load();
   applyFont(prefs.get("fontSize", 15));
   applyMode(preferredMode(doc.format));
+  applySidebarWidth(prefs.get("sidebarWidth", SIDEBAR_WIDTH));
+  setSidebarHidden(prefs.get("sidebarHidden", false));
+  tree.showHidden = prefs.get("showHidden", false);
   renderRecent();
   refreshChrome();
 
@@ -1647,15 +1841,20 @@ async function boot() {
   if (win) {
     await host.listen<string>("menu", (id) => commands[id]?.());
     await host.listen<string>("open-path", (path) => openPath(path));
+    await host.listen<string>("open-folder", (path) => openFolder(path));
     // Another window changed a preference.
     await host.listen<{ key: string; value: unknown }>("setting-changed", ({ key, value }) => {
       if (value === null) delete settings[key];
       else settings[key] = value;
       if (key === "recent") renderRecent();
+      if (key === "sidebarWidth" && typeof value === "number") applySidebarWidth(value);
     });
 
     await win.onCloseRequested(async (e) => {
-      if (!(await prepareToClose())) e.preventDefault();
+      if (await prepareToClose()) return;
+      e.preventDefault();
+      // If this was part of quitting edit2, the quit is off.
+      host.closeCancelled();
     });
 
     await win.onDragDropEvent(async (e) => {
@@ -1663,16 +1862,21 @@ async function boot() {
       if (p.type === "enter" || p.type === "over") app.classList.add("is-dropping");
       else app.classList.remove("is-dropping");
       if (p.type === "drop") {
-        for (const path of p.paths) await openPath(path);
+        for (const path of p.paths) await openAny(path);
       }
     });
   }
 
   // Listeners are live, so the backend may now route files to this window.
   const init = await host.initWindow();
+  initialized = true;
   draftsDir = init.draftsDir;
   if (init.notice) toast(init.notice, 6000);
+  // In a plain browser there is no backend to remember the folder: use the setting.
+  const startFolder = inTauri ? init.folder : prefs.get<string | null>("folder", null);
+  if (startFolder && !(await openFolder(startFolder, true)) && !inTauri) prefs.set("folder", null);
   for (const path of init.files) await openPath(path);
+  await syncBackend(true);
   await win?.show();
   await win?.setFocus();
 }
@@ -1680,4 +1884,4 @@ async function boot() {
 boot();
 
 // Dev only, in a plain browser: open files from the console, e.g. edit2.open("/abs/path.json").
-if (import.meta.env.DEV && !inTauri) Object.assign(window, { edit2: { open: openPath, view, commands } });
+if (import.meta.env.DEV && !inTauri) Object.assign(window, { edit2: { open: openPath, openFolder, view, commands } });

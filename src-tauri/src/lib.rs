@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -9,35 +8,31 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 mod codec;
+mod fstree;
 #[cfg(target_os = "macos")]
 mod mac_quit;
 #[cfg(target_os = "macos")]
 mod menu;
 mod migrate;
 mod preview;
+mod routing;
 mod settings;
 
-/// What the backend knows about each editor window. A window has one tab per file.
-#[derive(Default)]
-struct WinInfo {
-    /// Frontend has finished booting and can receive `open-path` events.
-    ready: bool,
-    /// Some tab has changes that are not on disk.
-    unsaved: bool,
-    /// Files open in the window's tabs (reopened if the page reloads).
-    paths: Vec<String>,
-    /// Files to open once the frontend is ready.
-    pending: Vec<String>,
-}
+use routing::{WinInfo, Wins};
 
 #[derive(Default)]
 struct AppState {
-    wins: Mutex<HashMap<String, WinInfo>>,
+    wins: Mutex<Wins>,
     counter: AtomicU32,
     /// Most recently focused window, for menu commands while none has focus.
     last_focused: Mutex<Option<String>>,
     /// Staged drafts have been handed to a window for restoring.
     drafts_restored: AtomicBool,
+    /// The folders open at last quit have been handed to windows.
+    folder_restored: AtomicBool,
+    /// Windows are closing because edit2 is quitting (keep their folders for
+    /// the next launch). Cleared if a window cancels the quit.
+    quitting: AtomicBool,
     /// One-time message for the first window (data migrated from mdit).
     notice: Mutex<Option<String>>,
 }
@@ -51,6 +46,8 @@ struct InitData {
     drafts_dir: String,
     /// Something to tell the user once, e.g. that mdit's data was migrated.
     notice: Option<String>,
+    /// Folder to show in the sidebar.
+    folder: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -113,17 +110,31 @@ fn normalize(path: &str) -> String {
 }
 
 fn create_window(app: &AppHandle, pending: Vec<String>) -> tauri::Result<WebviewWindow> {
+    create_window_with(app, pending, None)
+}
+
+fn create_window_with(
+    app: &AppHandle,
+    pending: Vec<String>,
+    folder: Option<String>,
+) -> tauri::Result<WebviewWindow> {
     let state = app.state::<AppState>();
     let n = state.counter.fetch_add(1, Ordering::SeqCst);
     let label = if n == 0 { "main".to_string() } else { format!("doc-{n}") };
 
+    let has_folder = folder.is_some();
     state.wins.lock().unwrap().insert(
         label.clone(),
         WinInfo {
             pending,
+            pending_folder: folder.clone(),
+            folder,
             ..Default::default()
         },
     );
+    if has_folder {
+        save_open_folders(app);
+    }
 
     // Cascade new windows from the one currently in front.
     let anchor = app
@@ -161,16 +172,14 @@ fn create_window(app: &AppHandle, pending: Vec<String>) -> tauri::Result<Webview
 /// window (whose frontend reuses an empty tab or adds one), else a new window.
 fn route_path(app: &AppHandle, path: &str) {
     let path = normalize(path);
+    if Path::new(&path).is_dir() {
+        return route_folder(app, path);
+    }
     let front = front_window(app).map(|w| w.label().to_string());
     let target = {
         let state = app.state::<AppState>();
         let mut wins = state.wins.lock().unwrap();
-        let label = wins
-            .iter()
-            .find(|(_, w)| w.paths.contains(&path))
-            .map(|(l, _)| l.clone())
-            .or(front.filter(|l| wins.contains_key(l)))
-            .or_else(|| wins.keys().next().cloned());
+        let label = routing::file_target(&wins, front.as_deref(), &path);
         label.map(|label| {
             let info = wins.get_mut(&label).unwrap();
             if !info.ready {
@@ -196,6 +205,75 @@ fn route_path(app: &AppHandle, path: &str) {
     }
 }
 
+/// Show `path` in a sidebar: focus the window that already shows it, else use
+/// the front window if it has no folder yet, else open a new window.
+fn route_folder(app: &AppHandle, path: String) {
+    let front = front_window(app).map(|w| w.label().to_string());
+    let target = {
+        let state = app.state::<AppState>();
+        let mut wins = state.wins.lock().unwrap();
+        let label = routing::folder_target(&wins, front.as_deref(), &path);
+        label.map(|label| {
+            let info = wins.get_mut(&label).unwrap();
+            let fresh = info.folder.as_deref() != Some(path.as_str());
+            // Claim it now, so a second folder routed meanwhile goes elsewhere.
+            info.folder = Some(path.clone());
+            if !info.ready {
+                info.pending_folder = Some(path.clone());
+            }
+            (label, info.ready && fresh)
+        })
+    };
+
+    match target {
+        Some((label, emit)) => {
+            if emit {
+                let _ = app.emit_to(label.as_str(), "open-folder", &path);
+            }
+            if let Some(w) = app.get_webview_window(&label) {
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+            save_open_folders(app);
+        }
+        None => {
+            let _ = create_window_with(app, Vec::new(), Some(path));
+        }
+    }
+}
+
+/// Bring `label` forward, and have it show `path` (a tab, or its folder).
+fn reveal_in(app: &AppHandle, label: &str, path: &str, is_dir: bool) {
+    if !is_dir {
+        let _ = app.emit_to(label, "open-path", path);
+    }
+    if let Some(w) = app.get_webview_window(label) {
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// Remember the windows' folders in settings.json, for the next launch.
+fn save_open_folders(app: &AppHandle) {
+    let folders = routing::open_folders(&app.state::<AppState>().wins.lock().unwrap());
+    let settings = app.state::<settings::Settings>();
+    let value = serde_json::json!(folders);
+    if settings.all().get("folders") != Some(&value) {
+        let _ = settings.set("folders".into(), value);
+    }
+}
+
+/// Folders to reopen at launch: `folders`, or the single `folder` an earlier
+/// build of this feature kept. Ones that no longer exist are skipped.
+fn saved_folders(settings: &settings::Settings) -> Vec<String> {
+    let all = settings.all();
+    let list: Vec<String> = match all.get("folders") {
+        Some(serde_json::Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+        _ => all.get("folder").and_then(|v| v.as_str()).map(|f| vec![f.to_string()]).unwrap_or_default(),
+    };
+    list.into_iter().filter(|p| Path::new(p).is_dir()).collect()
+}
+
 /// Bring a window forward, or open one if there is none.
 fn show_some_window(app: &AppHandle) {
     match front_window(app).or_else(|| app.webview_windows().into_values().next()) {
@@ -211,6 +289,7 @@ fn show_some_window(app: &AppHandle) {
 
 /// Ask every window to close; each one prompts about its own unsaved changes.
 fn close_all(app: &AppHandle) {
+    app.state::<AppState>().quitting.store(true, Ordering::SeqCst);
     for w in app.webview_windows().values() {
         let _ = w.close();
     }
@@ -230,8 +309,9 @@ fn front_window(app: &AppHandle) -> Option<WebviewWindow> {
     if let Some(w) = windows.values().find(|w| w.is_focused().unwrap_or(false)) {
         return Some(w.clone());
     }
-    let last = app.state::<AppState>().last_focused.lock().unwrap().clone()?;
-    windows.get(&last).cloned()
+    let last = app.state::<AppState>().last_focused.lock().unwrap().clone();
+    // That one may be gone (closed while edit2 was in the background): any window then.
+    last.and_then(|l| windows.get(&l).cloned()).or_else(|| windows.into_values().next())
 }
 
 /// Replace `path` atomically: write a sibling temp file, then rename it over
@@ -280,7 +360,7 @@ fn file_args(args: impl Iterator<Item = String>, cwd: Option<&Path>) -> Vec<Stri
                 _ => a,
             }
         })
-        .filter(|a| Path::new(a).is_file())
+        .filter(|a| Path::new(a).is_file() || Path::new(a).is_dir())
         .collect()
 }
 
@@ -294,6 +374,7 @@ fn init_window(
     app: AppHandle,
     window: WebviewWindow,
     state: tauri::State<'_, AppState>,
+    settings: tauri::State<'_, settings::Settings>,
 ) -> Result<InitData, String> {
     let dir = drafts_dir(&app)?;
     let mut files = if state.drafts_restored.swap(true, Ordering::SeqCst) {
@@ -306,12 +387,35 @@ fn init_window(
     let info = wins.entry(window.label().to_string()).or_default();
     info.ready = true;
     let pending = std::mem::take(&mut info.pending);
+    let explicit = !pending.is_empty() || info.pending_folder.is_some();
     files.extend(if pending.is_empty() { info.paths.clone() } else { pending });
     files.dedup();
+
+    // A folder sent to this window, else the one it had before a reload, else
+    // (first window of a plain launch) the folders open when edit2 last quit:
+    // the first here, each other one in a window of its own.
+    let mut folder = info.pending_folder.take().or_else(|| info.folder.clone());
+    let first = !state.folder_restored.swap(true, Ordering::SeqCst);
+    let mut others = Vec::new();
+    if folder.is_none() && first && !explicit {
+        let mut saved = saved_folders(&settings).into_iter();
+        folder = saved.next();
+        others = saved.collect();
+    }
+    info.folder = folder.clone();
+    drop(wins);
+    for f in others {
+        let app = app.clone();
+        // Not from inside this command: window creation must not block it.
+        tauri::async_runtime::spawn(async move {
+            let _ = create_window_with(&app, Vec::new(), Some(f));
+        });
+    }
     Ok(InitData {
         files,
         drafts_dir: dir.to_string_lossy().into_owned(),
         notice: state.notice.lock().unwrap().take(),
+        folder,
     })
 }
 
@@ -329,16 +433,97 @@ fn delete_draft(app: AppHandle, path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn report_state(
+    app: AppHandle,
     window: WebviewWindow,
     state: tauri::State<'_, AppState>,
     paths: Vec<String>,
     unsaved: bool,
+    folder: Option<String>,
 ) {
-    let mut wins = state.wins.lock().unwrap();
-    if let Some(info) = wins.get_mut(window.label()) {
+    let folder_changed = {
+        let mut wins = state.wins.lock().unwrap();
+        let Some(info) = wins.get_mut(window.label()) else {
+            return;
+        };
         info.paths = paths.iter().map(|p| normalize(p)).collect();
         info.unsaved = unsaved;
+        let folder = folder.map(|f| normalize(&f));
+        let changed = info.folder != folder;
+        info.folder = folder;
+        changed
+    };
+    if folder_changed {
+        save_open_folders(&app);
     }
+}
+
+/// Open… or Open Folder… in a window that shows a folder: open the file or
+/// folder in a new window, unless a window already has it (then bring that
+/// one forward). Async so the new window is not built inside the call.
+#[tauri::command]
+async fn open_in_new_window(app: AppHandle, path: String) -> Result<(), String> {
+    let path = normalize(&path);
+    let is_dir = Path::new(&path).is_dir();
+    let existing = routing::new_window_target(&app.state::<AppState>().wins.lock().unwrap(), &path, is_dir);
+    match existing {
+        Some(label) => reveal_in(&app, &label, &path, is_dir),
+        None if is_dir => {
+            create_window_with(&app, Vec::new(), Some(path)).map_err(|e| e.to_string())?;
+        }
+        None => {
+            create_window_with(&app, vec![path], None).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Before a window opens `path` itself: if another window has it as a tab,
+/// switch to that tab there and return true, so one file is not edited in two
+/// windows at once.
+#[tauri::command]
+fn focus_if_open(app: AppHandle, window: WebviewWindow, state: tauri::State<'_, AppState>, path: String) -> bool {
+    let path = normalize(&path);
+    let other = routing::window_with_file(&state.wins.lock().unwrap(), &path, Some(window.label())).map(str::to_string);
+    match other {
+        Some(label) => {
+            reveal_in(&app, &label, &path, false);
+            true
+        }
+        None => false,
+    }
+}
+
+/// A window refused to close during a quit (the user chose Cancel): edit2
+/// keeps running, so closing windows from now on forgets their folders again.
+#[tauri::command]
+fn close_cancelled(app: AppHandle, state: tauri::State<'_, AppState>) {
+    if state.quitting.swap(false, Ordering::SeqCst) {
+        // Windows already closed during the attempt are gone for good.
+        save_open_folders(&app);
+    }
+}
+
+#[derive(Serialize)]
+struct PathInfo {
+    /// Canonical path.
+    path: String,
+    dir: bool,
+}
+
+/// Whether `path` exists and is a folder; None if it does not exist.
+#[tauri::command]
+fn stat_path(path: String) -> Option<PathInfo> {
+    let meta = std::fs::metadata(&path).ok()?;
+    Some(PathInfo {
+        path: normalize(&path),
+        dir: meta.is_dir(),
+    })
+}
+
+/// One level of a folder for the sidebar tree, folders first.
+#[tauri::command]
+fn list_dir(path: String, show_hidden: Option<bool>) -> Result<Vec<fstree::Entry>, String> {
+    fstree::list(Path::new(&path), show_hidden.unwrap_or(false)).map_err(|e| e.to_string())
 }
 
 /// Read a text file, detecting its encoding unless one is given. A file over
@@ -418,6 +603,15 @@ fn set_format_menu(app: AppHandle, format: bool, minify: bool) {
     let _ = (app, format, minify);
 }
 
+/// The front window has (or has no) folder open.
+#[tauri::command]
+fn set_folder_menu(app: AppHandle, open: bool) {
+    #[cfg(target_os = "macos")]
+    menu::set_enabled(&app, &[("close_folder", open), ("toggle_sidebar", open)]);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, open);
+}
+
 #[tauri::command]
 fn load_settings(settings: tauri::State<'_, settings::Settings>) -> serde_json::Map<String, serde_json::Value> {
     settings.all()
@@ -491,10 +685,16 @@ pub fn run() {
             delete_draft,
             allow_assets,
             set_format_menu,
+            set_folder_menu,
             serve_preview,
             load_settings,
             set_setting,
             file_mtime,
+            stat_path,
+            list_dir,
+            open_in_new_window,
+            focus_if_open,
+            close_cancelled,
             quit
         ])
         .setup(|app| {
@@ -529,7 +729,19 @@ pub fn run() {
                     *state.last_focused.lock().unwrap() = Some(window.label().to_string());
                 }
                 tauri::WindowEvent::Destroyed => {
-                    state.wins.lock().unwrap().remove(window.label());
+                    let mut last = state.last_focused.lock().unwrap();
+                    if last.as_deref() == Some(window.label()) {
+                        *last = None;
+                    }
+                    drop(last);
+                    let left = {
+                        let mut wins = state.wins.lock().unwrap();
+                        wins.remove(window.label());
+                        wins.len()
+                    };
+                    if routing::forget_on_close(state.quitting.load(Ordering::SeqCst), left) {
+                        save_open_folders(window.app_handle());
+                    }
                 }
                 _ => {}
             }

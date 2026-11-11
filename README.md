@@ -1,6 +1,6 @@
 # edit2
 
-A quick editor for text files. Open a file, look at it, change it, close it. There is no sidebar or file tree: each file you open becomes a tab in a single window. The + button in the tab strip (or ⌘T) starts a new draft at any time.
+A quick editor for text files. Open a file, look at it, change it, close it. Each file you open becomes a tab in a single window. Open a folder and its tree appears in a sidebar on the left; without one there is no sidebar. The + button in the tab strip (or ⌘T) starts a new draft at any time.
 
 edit2 was called mdit and only edited Markdown. It now opens Markdown, plain text, JSON, YAML, TOML, XML, CSV and HTML, each with highlighting and (except plain text) a live preview. Each format is a built-in plugin, so adding another one does not touch the rest of the app.
 
@@ -34,10 +34,15 @@ Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edi
 
 ## Features
 
-- **Three views**: Write (editor only), Split (editor and live preview with synced scrolling) and Read (preview only), remembered per format. Below 760 px wide, Split falls back to the editor. Plain text has only Write.
+- **Three views**: Write (editor only), Split (editor and live preview with synced scrolling) and Read (preview only), remembered per format. When the area beside the sidebar (the whole window if there is none) is narrower than 760 px, or 640 px next to the sidebar, Split falls back to the editor. Plain text has only Write.
 - **Markdown editing**: dimmed markup characters, highlighting inside fenced code blocks, automatic list continuation, and formatting shortcuts (⌘B bold, ⌘I italic, ⌘E inline code, ⌘K link, ⇧⌘X strikethrough). Clicking a task box in the preview updates the source.
 - **Links**: external links open in the system browser; links to other files of a supported format open them in edit2, other files are shown in Finder.
-- **Tabs**: files from Finder "Open With" or the Dock icon, drag and drop, the command line (`edit2 file.json`), ⌘O or links in the preview open as tabs in the same window. A file that is already open just switches to its tab, and an opened file takes over an empty untitled tab instead of adding another. Each tab keeps its own cursor, scroll position and undo history. Tabs can be reordered by dragging and closed with middle-click.
+- **Folders**: Open Folder (⇧⌘O, the File menu, or the link on the start screen), dropping a folder on the window or the Dock icon, Finder "Open With" or `edit2 path/to/folder` shows the folder as a tree in a sidebar. Folders come first, then files by name; dotfiles, `node_modules` and `__pycache__` are hidden unless you turn on "显示隐藏文件" in the sidebar's ⋯ menu. A folder's contents are read when you expand it, again each time you reopen it, and when the window comes back to the front. Clicking a file opens it as a tab like ⌘O does (files of unknown type open as plain text, binary files are refused), and the active tab's file is highlighted. Drag the sidebar's right edge to resize it (double-click for the default width), hide it with ⇧⌘E or the button next to the window controls, and close the folder with × or File → Close Folder. Each window has at most one folder, and keeps it:
+  - In a window that shows a folder, Open… (⌘O) and Open Folder… (⇧⌘O) open what you pick in a new window, and dropping another folder on it does the same. Without a folder they open in the current window, as before.
+  - A folder from Finder, the Dock or the command line goes to the window that already shows it, else to the front window if it has no folder, else to a new window. Files from those places, dropped files, links in the preview and files clicked in the tree open in the window they were aimed at.
+  - A file that is already open in another window is not opened twice: edit2 switches to its tab there.
+  - Every window's folder comes back on the next plain launch, each in its own window. Closing a window forgets its folder; quitting, or closing the last window, keeps them.
+- **Tabs**: files from Finder "Open With" or the Dock icon, drag and drop, the command line (`edit2 file.json`), ⌘O, the folder sidebar or links in the preview open as tabs in the same window (⌘O in a window with a folder opens a new window, see above). A file that is already open just switches to its tab, and an opened file takes over an empty untitled tab instead of adding another. Each tab keeps its own cursor, scroll position and undo history. Tabs can be reordered by dragging and closed with middle-click.
 - **Auto-save**: edits are written to disk shortly after you stop typing, and when you switch tabs or leave the window. Before writing, edit2 checks that no other program has changed the file; if one has, it asks instead of overwriting.
 - **Drafts**: untitled documents (Markdown) are auto-saved to a staging area (`~/Library/Application Support/dev.symphonyprotocollab.edit2/drafts` on macOS) and reopened as tabs on the next launch. Saving a draft with ⌘S turns it into a real file and removes it from staging; saving it with another extension switches its format. Closing a draft tab asks whether to save it as a file or delete it.
 - **Changes on disk**: if another program changes an open file, edit2 reloads it silently when there are no pending edits, and asks otherwise. A deleted file is flagged in the status bar and is never silently recreated.
@@ -45,7 +50,7 @@ Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edi
 - **Encodings**: the encoding is detected (UTF-8, UTF-16, GBK/GB18030, Big5, Shift_JIS, EUC-KR, Windows-1252, …) and files are written back in it, keeping a byte order mark and CRLF or LF line endings. A "?" after the encoding means it was guessed from little text; the status bar menu reopens the file in another encoding or saves it in one. If you type characters the encoding cannot hold, edit2 does not save them lossily: it offers to switch to UTF-8. Binary files are refused.
 - **Large files**: from 5 MB, the preview and word count wait for a click. Files over 50 MB open read-only after you confirm.
 - **Appearance**: follows the system light or dark setting. The font size is adjustable (⌘= / ⌘- / ⌘0), and soft wrap can be turned off per tab (⌥Z).
-- **Settings** (views, font size, recent files, per-file formats) are kept in `settings.json` in the app data folder. The first launch copies mdit's drafts and settings over and leaves mdit's own data in place.
+- **Settings** (views, font size, recent files, per-file formats, the open folders and the sidebar's width) are kept in `settings.json` in the app data folder. The first launch copies mdit's drafts and settings over and leaves mdit's own data in place.
 
 ## Upgrading from mdit
 
@@ -60,6 +65,8 @@ Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edi
 | --- | --- | --- |
 | New tab | ⌘T / ⌘N | Ctrl+T / Ctrl+N |
 | Open | ⌘O | Ctrl+O |
+| Open Folder | ⇧⌘O | Ctrl+Shift+O |
+| Show / hide sidebar | ⇧⌘E | Ctrl+Shift+E |
 | Save / Save As | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S |
 | Show in Finder | ⇧⌘R | Ctrl+Shift+R |
 | Write / Split / Read | ⌘1 / ⌘2 / ⌘3 | Ctrl+1 / 2 / 3 |
@@ -80,14 +87,15 @@ cd edit2
 npm install
 npm run tauri dev                         # run the app
 npm run tauri dev -- -- path/to/file.md   # open a file at launch
+npm run tauri dev -- -- path/to/folder    # open a folder in the sidebar at launch
 npm run tauri build                       # build release bundles into src-tauri/target/release/bundle
 npm run tauri build -- --target universal-apple-darwin   # Apple silicon + Intel (needs `rustup target add x86_64-apple-darwin`)
-cd src-tauri && cargo test                # encoding, preview protocol and migration tests
+cd src-tauri && cargo test                # encoding, preview protocol, migration, folder listing and window routing tests
 ```
 
 Publishing a GitHub release runs [.github/workflows/release-windows.yml](.github/workflows/release-windows.yml), which builds the Windows installer and attaches it to the release; run the workflow by hand with a tag to add the installer to an older release. The macOS `.dmg` is still built locally with the universal target above.
 
-`npm run dev` serves the UI alone in a browser. Tauri calls are stubbed; in the browser console, `edit2.open("/absolute/path/file.json")` opens a file through the dev server.
+`npm run dev` serves the UI alone in a browser. Tauri calls are stubbed; in the browser console, `edit2.open("/absolute/path/file.json")` opens a file through the dev server, and `edit2.openFolder("/absolute/path")` (or the Open Folder link, which asks for a path) shows a folder, listed by a small middleware in `vite.config.ts`. The dev server only serves files inside the project, so open files from the project's own tree there.
 
 ## Adding a format
 
@@ -108,12 +116,15 @@ src/                     frontend (vanilla TypeScript)
     markdown/ text/ json/ yaml/ toml/ xml/ csv/ html/
   editor.ts              CodeMirror setup and theme
   encodings.ts           encodings offered in the status bar
-  popup.ts               status bar menus
+  popup.ts               status bar and sidebar menus
   tabs.ts                tab strip (rendering, close, drag to reorder)
+  sidebar.ts             folder tree (lazy loading, keyboard navigation, active file)
   host.ts                Tauri bridge with browser fallbacks
   styles.css             design tokens (light/dark) and layout
 src-tauri/src/
-  lib.rs                 routing opened files to the window, drafts staging area, file I/O commands
+  lib.rs                 routing opened files and folders to the window, drafts staging area, file I/O commands
+  fstree.rs              one level of a folder for the sidebar, sorted and filtered
+  routing.rs             which window a file or folder goes to; folders to reopen at launch
   codec.rs               encoding detection, decoding and lossless encoding
   preview.rs             preview: protocol for HTML pages with scripts enabled
   settings.rs            settings.json

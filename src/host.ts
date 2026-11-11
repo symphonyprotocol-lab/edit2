@@ -43,6 +43,21 @@ export interface InitData {
   draftsDir: string;
   /** Tell the user once (e.g. data migrated from mdit). */
   notice?: string | null;
+  /** Folder to show in the sidebar. */
+  folder?: string | null;
+}
+
+/** One child of a folder, as the sidebar tree lists it. */
+export interface DirEntry {
+  name: string;
+  path: string;
+  dir: boolean;
+}
+
+export interface PathInfo {
+  /** Canonical path. */
+  path: string;
+  dir: boolean;
 }
 
 export interface Written {
@@ -68,13 +83,47 @@ async function devRead(path: string): Promise<FileData> {
   return { path, content, mtime: 0, encoding: "UTF-8", bom: false, guessed: false, size: content.length };
 }
 
+/**
+ * Dev only, in a plain browser: list folders through a small vite middleware
+ * (see vite.config.ts), which follows the same rules as the backend.
+ */
+async function devFs<T>(op: "ls" | "stat", path: string, hidden = false): Promise<T> {
+  if (!import.meta.env.DEV) throw new Error("需要在 Tauri 中运行");
+  const res = await fetch(`/__edit2/${op}?path=${encodeURIComponent(path)}${hidden ? "&hidden=1" : ""}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export const host = {
   /** What this window should open as tabs when it boots. */
   initWindow: (): Promise<InitData> =>
     inTauri ? invoke("init_window") : Promise.resolve({ files: [], draftsDir: "/drafts" }),
 
-  reportState: (paths: string[], unsaved: boolean): Promise<void> =>
-    inTauri ? invoke("report_state", { paths, unsaved }) : Promise.resolve(),
+  reportState: (paths: string[], unsaved: boolean, folder: string | null): Promise<void> =>
+    inTauri ? invoke("report_state", { paths, unsaved, folder }) : Promise.resolve(),
+
+  setFolderMenu: (open: boolean): Promise<void> =>
+    inTauri ? invoke("set_folder_menu", { open }) : Promise.resolve(),
+
+  /** Open a file or folder in a new window, or bring forward the window that has it. */
+  openInNewWindow: (path: string): Promise<void> =>
+    inTauri ? invoke("open_in_new_window", { path }) : Promise.resolve(),
+
+  /** If another window has `path` as a tab, switch to it there and return true. */
+  focusIfOpen: (path: string): Promise<boolean> =>
+    inTauri ? invoke<boolean>("focus_if_open", { path }).catch(() => false) : Promise.resolve(false),
+
+  /** A close that was part of quitting was cancelled. */
+  closeCancelled: (): Promise<void> =>
+    inTauri ? invoke<void>("close_cancelled").catch(() => {}) : Promise.resolve(),
+
+  /** One level of a folder, folders first; dotfiles and node_modules only with `showHidden`. */
+  listDir: (path: string, showHidden = false): Promise<DirEntry[]> =>
+    inTauri ? invoke("list_dir", { path, showHidden }) : devFs("ls", path, showHidden),
+
+  /** Canonical path and kind, or null if nothing is there. */
+  statPath: (path: string): Promise<PathInfo | null> =>
+    inTauri ? invoke("stat_path", { path }) : devFs<PathInfo | null>("stat", path).catch(() => null),
 
   setFormatMenu: (format: boolean, minify: boolean): Promise<void> =>
     inTauri ? invoke("set_format_menu", { format, minify }) : Promise.resolve(),
@@ -123,6 +172,17 @@ export const host = {
   async pickFile(filters: DialogFilter[]): Promise<string | null> {
     if (!inTauri) return null;
     const picked = await openDialog({ multiple: false, directory: false, filters });
+    return typeof picked === "string" ? picked : null;
+  },
+
+  /** The native dialogs pick files or folders, not both: folders get their own. */
+  async pickFolder(): Promise<string | null> {
+    if (!inTauri) {
+      // A plain browser has no folder picker that yields a path.
+      const path = import.meta.env.DEV ? window.prompt("文件夹的绝对路径") : null;
+      return path?.trim() || null;
+    }
+    const picked = await openDialog({ multiple: false, directory: true });
     return typeof picked === "string" ? picked : null;
   },
 

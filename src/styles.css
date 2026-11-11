@@ -90,8 +90,39 @@ button { font: inherit; color: inherit; }
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
+  position: relative;
 }
 .platform-other .titlebar { padding-left: 10px; }
+/* Room for the sidebar button, once a folder is open. */
+#app.has-folder .titlebar { padding-left: calc(var(--lights-w) + 4px + 34px); }
+#app.has-folder.platform-other .titlebar { padding-left: 44px; }
+
+.tb-sidebar {
+  display: none;
+  position: absolute;
+  left: calc(var(--lights-w) + 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px; height: 26px;
+  border: 0; border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  place-items: center;
+  cursor: default;
+}
+.platform-other .tb-sidebar { left: 10px; }
+#app.has-folder .tb-sidebar { display: grid; }
+.tb-sidebar:hover { background: var(--hover); color: var(--ink); }
+.tb-sidebar[aria-expanded="true"] { color: var(--ink-2); }
+.tb-sidebar:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A window with a strip on its left. */
+.tb-sidebar::before {
+  content: "";
+  width: 14px; height: 11px;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  background: linear-gradient(currentColor, currentColor) 4px 0 / 1.5px 100% no-repeat;
+}
 #app[data-mode="split"]:not(.is-empty) .titlebar { border-bottom-color: var(--line); }
 
 .tb-title {
@@ -121,7 +152,7 @@ button { font: inherit; color: inherit; }
 
 .tabs { display: none; min-width: 0; align-items: center; gap: 4px; height: 100%; }
 #app.has-tabs .titlebar { grid-template-columns: minmax(0, 1fr) auto; }
-#app.has-tabs .titlebar > .tb-side:first-child,
+#app.has-tabs .titlebar > .tb-side:first-of-type,
 #app.has-tabs .tb-title { display: none; }
 #app.has-tabs .tabs { display: flex; }
 
@@ -249,6 +280,12 @@ button { font: inherit; color: inherit; }
   display: flex;
   position: relative;
 }
+.panes {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  position: relative;
+}
 
 .pane {
   flex: 1 1 0;
@@ -262,22 +299,146 @@ button { font: inherit; color: inherit; }
 #app[data-mode="read"] .preview-pane { border-left: 0; }
 #app.is-empty .pane { display: none; }
 
-@media (max-width: 760px) {
-  #app[data-mode="split"] .preview-pane { display: none; }
-  #app[data-mode="split"] .titlebar { border-bottom-color: transparent; }
+/* Too narrow for two panes (judged by the area beside the sidebar in main.ts). */
+#app.narrow[data-mode="split"] .preview-pane { display: none; }
+#app.narrow[data-mode="split"]:not(.has-folder) .titlebar { border-bottom-color: transparent; }
+/* The sidebar draws its own line under the title bar. */
+#app.has-folder:not(.sidebar-hidden) .titlebar { border-bottom-color: var(--line); }
+
+/* ---------- folder sidebar ---------- */
+
+.sidebar {
+  display: none;
+  flex: none;
+  width: var(--sidebar-w, 240px);
+  /* A wide sidebar from a bigger window must not crowd out the editor. */
+  max-width: max(160px, calc(100vw - 320px));
+  min-width: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  position: relative;
+  font-size: 13px;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
+#app.has-folder .sidebar { display: flex; }
+#app.has-folder.sidebar-hidden .sidebar { display: none; }
+
+.sb-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 6px 0 14px;
+}
+.sb-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.sb-btn {
+  flex: none;
+  width: 22px; height: 22px;
+  border: 0; border-radius: 5px;
+  background: transparent;
+  color: var(--ink-3);
+  display: grid; place-items: center;
+  cursor: default;
+  opacity: 0;
+}
+.sidebar:hover .sb-btn, .sb-btn:focus-visible, .sb-btn[aria-expanded="true"] { opacity: 1; }
+.sb-btn:hover, .sb-btn[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
+.sb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.sb-close::before {
+  content: "";
+  width: 8px; height: 8px;
+  background:
+    linear-gradient(45deg, transparent 45%, currentColor 45% 55%, transparent 55%),
+    linear-gradient(-45deg, transparent 45%, currentColor 45% 55%, transparent 55%);
+}
+.sb-more::before {
+  content: "";
+  width: 12px; height: 3px;
+  background: radial-gradient(circle, currentColor 1.3px, transparent 1.6px) 0 0 / 4px 3px repeat-x;
+}
+
+.sb-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 6px 12px;
+}
+.sb-tree:focus { outline: none; }
+
+.ft-row, .ft-note {
+  --indent: calc(var(--depth, 0) * 14px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px 0 calc(4px + var(--indent));
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.ft-row { color: var(--ink-2); }
+.ft-row:hover { background: var(--hover); color: var(--ink); }
+.ft-row:focus { outline: none; }
+.ft-row:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.ft-row.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
+.ft-row.loading .ft-chev { opacity: 0.4; }
+.ft-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ft-note { color: var(--ink-3); font-size: 12px; padding-left: calc(22px + var(--indent)); }
+
+.ft-chev {
+  flex: none;
+  width: 14px; height: 14px;
+  display: grid; place-items: center;
+  color: var(--ink-3);
+}
+.ft-row.dir .ft-chev::before {
+  content: "";
+  width: 5px; height: 5px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: translateX(-1px) rotate(-45deg);
+  transition: transform 0.12s ease;
+}
+.ft-row.dir[aria-expanded="true"] .ft-chev::before { transform: translateY(-1px) rotate(45deg); }
+
+.sb-resizer {
+  position: absolute;
+  top: 0; bottom: 0; right: -3px;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.sb-resizer:hover, .sidebar.resizing .sb-resizer { background: linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat; }
+.sidebar.resizing { transition: none; }
+#app.resizing-sidebar, #app.resizing-sidebar * { cursor: col-resize !important; }
 
 /* ---------- empty state ---------- */
 
 .empty {
   flex: 1;
+  min-width: 0;
   display: none;
+  /* One column no wider than the area: an auto-sized track would grow to the
+     longest recent path (WebKit ignores the percentages below when measuring
+     it) and push the box off-centre, past the window's edge. */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   overflow: auto;
   padding: 24px 16px 48px;
 }
 #app.is-empty .empty { display: grid; }
-.empty-box { width: min(340px, 100%); text-align: center; }
+.empty-box { width: 100%; max-width: 340px; min-width: 0; text-align: center; }
 .wordmark {
   font-family: var(--mono);
   font-size: 30px;
@@ -319,12 +480,21 @@ button { font: inherit; color: inherit; }
   font-size: 13px; text-align: left; cursor: default;
 }
 .recent button:hover, .recent button:focus-visible { background: var(--hover); outline: none; }
-.recent .r-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent .r-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent .r-dir {
+  flex: 0 1 auto; min-width: 0;
   color: var(--ink-3); font-size: 12px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; max-width: 55%;
 }
 .drop-hint { margin-top: 22px; font-size: 12px; color: var(--ink-3); }
+.link {
+  border: 0; padding: 0; background: none;
+  font-size: inherit; color: var(--ink-2);
+  text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px;
+  cursor: default;
+}
+.link:hover { color: var(--ink); text-decoration-color: currentColor; }
+.link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 
 /* ---------- editor ---------- */
 
@@ -722,7 +892,9 @@ button { font: inherit; color: inherit; }
 #app.is-dropping .drop-overlay { opacity: 1; }
 
 .toast {
-  position: absolute; left: 50%; bottom: 40px;
+  /* Centred in the area beside the sidebar (it lives in .panes). */
+  position: absolute; left: 50%; bottom: 12px;
+  z-index: 5;
   transform: translate(-50%, 6px);
   background: var(--ink); color: var(--bg);
   font-size: 12.5px; padding: 7px 14px; border-radius: 8px;
