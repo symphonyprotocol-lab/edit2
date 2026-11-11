@@ -2,8 +2,9 @@ import type { FormatPlugin } from "../types";
 
 /**
  * Office documents, read-only like PDFs. Each viewer and its library load the
- * first time a file of that kind opens. The legacy binary formats (.doc, .xls,
- * .ppt) only get a button to open them in the system's app.
+ * first time a file of that kind opens. Old Word and PowerPoint files (.doc,
+ * .ppt) only get a button to open them in the system's app; old Excel files
+ * (.xls) open like the others.
  */
 export const word: FormatPlugin = {
   id: "word",
@@ -18,7 +19,7 @@ export const word: FormatPlugin = {
 export const excel: FormatPlugin = {
   id: "excel",
   label: "Excel",
-  extensions: ["xlsx", "xlsm", "ods", "xls"],
+  extensions: ["xlsx", "xlsm", "xlsb", "xls", "ods"],
   preview: () => import("./excel").then((m) => m.excelPreview),
   stats: () => "",
   defaultMode: "read",

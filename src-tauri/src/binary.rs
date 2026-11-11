@@ -24,15 +24,19 @@ pub const IMAGE_EXTS: &[&str] = &[
 ];
 
 /// Office documents: the zip-based ones (Office Open XML, OpenDocument) and
-/// the legacy binary ones (OLE compound files), which only get a button to
-/// open them in another app.
-pub const OFFICE_EXTS: &[&str] = &["docx", "xlsx", "xlsm", "ods", "pptx", "doc", "xls", "ppt"];
+/// the legacy binary ones (OLE compound files). Old Word and PowerPoint files
+/// only get a button to open them in another app; old Excel files are shown.
+pub const OFFICE_EXTS: &[&str] = &["docx", "xlsx", "xlsm", "xlsb", "ods", "pptx", "doc", "xls", "ppt"];
 
 /// Largest range one call returns.
 pub const MAX_RANGE: u64 = 64 * 1024 * 1024;
 
 /// How much of the start of a file the sniffing looks at.
 const HEAD: usize = 1024 + 5;
+
+fn is_ext(path: &Path, ext: &str) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(ext))
+}
 
 pub fn kind_of(path: &Path) -> Option<Kind> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
@@ -79,6 +83,14 @@ pub fn looks_like_office(head: &[u8]) -> bool {
     head.starts_with(b"PK\x03\x04") || head.starts_with(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1")
 }
 
+/// Whether a file starts like markup: many systems export HTML or
+/// SpreadsheetML (XML) tables under a `.xls` name, and Excel opens them.
+pub fn looks_like_markup(head: &[u8]) -> bool {
+    let text = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
+    let start = text.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(text.len());
+    text[start..].starts_with(b"<")
+}
+
 fn head_of(path: &Path) -> Result<Vec<u8>, String> {
     let mut head = Vec::with_capacity(HEAD);
     File::open(path)
@@ -99,6 +111,7 @@ pub fn check(path: &Path) -> Result<Kind, String> {
         Kind::Image if looks_like_image(&head) => Ok(kind),
         Kind::Image => Err("这不是可以识别的图片文件".into()),
         Kind::Office if looks_like_office(&head) => Ok(kind),
+        Kind::Office if is_ext(path, "xls") && looks_like_markup(&head) => Ok(kind),
         Kind::Office => Err("这不是可以识别的 Office 文件".into()),
     }
 }
@@ -186,6 +199,11 @@ mod tests {
         assert_eq!(check(&temp("ok.docx", b"PK\x03\x04\x14\0")), Ok(Kind::Office));
         assert_eq!(check(&temp("old.xls", b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1\0")), Ok(Kind::Office));
         assert!(check(&temp("fake.pptx", b"<html>")).is_err());
+        // An HTML or XML table saved as .xls (common in exports) is let through; not as .xlsx.
+        assert_eq!(check(&temp("export.xls", b"\xEF\xBB\xBF\r\n<html><table>")), Ok(Kind::Office));
+        assert_eq!(check(&temp("ml.xls", b"<?xml version=\"1.0\"?><Workbook>")), Ok(Kind::Office));
+        assert!(check(&temp("export.xlsx", b"<html><table>")).is_err());
+        assert!(check(&temp("plain.xls", b"a\tb\n")).is_err());
     }
 
     #[test]
