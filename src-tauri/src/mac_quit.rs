@@ -22,6 +22,9 @@ extern "C-unwind" fn should_terminate(_this: *mut AnyObject, _cmd: Sel, _sender:
         return NS_TERMINATE_NOW;
     };
     if !crate::has_unsaved(app) {
+        // Windows torn down from here on are part of the quit: keep their folders.
+        use tauri::Manager;
+        app.state::<crate::AppState>().quitting.store(true, std::sync::atomic::Ordering::SeqCst);
         return NS_TERMINATE_NOW;
     }
     crate::close_all(app);

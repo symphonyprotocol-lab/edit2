@@ -105,6 +105,18 @@ export const host = {
   setFolderMenu: (open: boolean): Promise<void> =>
     inTauri ? invoke("set_folder_menu", { open }) : Promise.resolve(),
 
+  /** Open a file or folder in a new window, or bring forward the window that has it. */
+  openInNewWindow: (path: string): Promise<void> =>
+    inTauri ? invoke("open_in_new_window", { path }) : Promise.resolve(),
+
+  /** If another window has `path` as a tab, switch to it there and return true. */
+  focusIfOpen: (path: string): Promise<boolean> =>
+    inTauri ? invoke<boolean>("focus_if_open", { path }).catch(() => false) : Promise.resolve(false),
+
+  /** A close that was part of quitting was cancelled. */
+  closeCancelled: (): Promise<void> =>
+    inTauri ? invoke<void>("close_cancelled").catch(() => {}) : Promise.resolve(),
+
   /** One level of a folder, folders first; dotfiles and node_modules only with `showHidden`. */
   listDir: (path: string, showHidden = false): Promise<DirEntry[]> =>
     inTauri ? invoke("list_dir", { path, showHidden }) : devFs("ls", path, showHidden),

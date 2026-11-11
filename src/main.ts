@@ -332,8 +332,14 @@ function needsAttention(tab: Tab) {
 }
 
 let reported = "";
+/**
+ * Until boot has asked the backend what to open, say nothing: an early report
+ * of "no tabs, no folder" would overwrite what a reloaded page gets back.
+ */
+let initialized = false;
 /** Tell the backend what this window holds (for file routing and quit). */
 function syncBackend(force = false): Promise<void> {
+  if (!initialized) return Promise.resolve();
   const paths = tabs.map((t) => t.path ?? t.draft).filter((p): p is string => !!p);
   const unsaved = tabs.some((t) => t.dirty || needsAttention(t));
   const state = JSON.stringify([paths, unsaved, folder]);
@@ -1221,11 +1227,15 @@ const tabFor = (path: string) => tabs.find((t) => t.path === path || t.draft ===
 const inDrafts = (path: string) => !!draftsDir && dirname(path) === draftsDir;
 const opening = new Set<string>();
 
-/** Open a file in a tab, or switch to the tab that already has it. New tabs go last. */
+/**
+ * Open a file in a tab, or switch to the tab that already has it, here or in
+ * another window (one file is edited in one place). New tabs go last.
+ */
 async function openPath(path: string) {
   const open = tabFor(path);
   if (open) return activate(open);
   if (opening.has(path)) return;
+  if (await host.focusIfOpen(path)) return;
   opening.add(path);
   try {
     let data: FileData;
@@ -1307,7 +1317,10 @@ async function openViaDialog() {
   // macOS merges filters into one allow-list (no "all files" choice), which
   // would hide text files without a known extension: offer every file there.
   const path = await host.pickFile(isMac ? [] : [...dialogFilters(), { name: "所有文件", extensions: ["*"] }]);
-  if (path) await openPath(path);
+  if (!path) return;
+  // A window showing a folder keeps to it: other files get a window of their own.
+  if (folder && inTauri) await host.openInNewWindow(path);
+  else await openPath(path);
 }
 
 // ---------- folder sidebar ----------
@@ -1345,7 +1358,8 @@ async function openFolder(path: string, quiet = false): Promise<boolean> {
   sbNameEl.title = tildify(folder);
   app.classList.add("has-folder");
   setSidebarHidden(false);
-  prefs.set("folder", folder);
+  // In the app the backend remembers every window's folder (via syncBackend).
+  if (!inTauri) prefs.set("folder", folder);
   refreshChrome();
   tree.setActive(doc.path);
   // On the launch screen the tree is the natural next stop.
@@ -1355,8 +1369,7 @@ async function openFolder(path: string, quiet = false): Promise<boolean> {
 
 function closeFolder() {
   if (!folder) return;
-  // Another window may have opened a folder since: that one is remembered then.
-  if (prefs.get<string | null>("folder", null) === folder) prefs.set("folder", null);
+  if (!inTauri) prefs.set("folder", null);
   folder = null;
   tree.close();
   app.classList.remove("has-folder");
@@ -1366,7 +1379,10 @@ function closeFolder() {
 
 async function openFolderViaDialog() {
   const path = await host.pickFolder();
-  if (path) await openFolder(path);
+  if (!path) return;
+  // Each window keeps its folder: another one opens in a new window.
+  if (folder && inTauri) await host.openInNewWindow(path);
+  else await openFolder(path);
 }
 
 function setSidebarHidden(hidden: boolean, remember = false) {
@@ -1456,11 +1472,15 @@ new ResizeObserver(([entry]) => {
   anchorsMeasured = false;
 }).observe(panesEl);
 
-/** A dropped or routed path: folders go to the sidebar, files to a tab. */
+/**
+ * A path dropped on the window: files open here as tabs; a folder goes to
+ * this window's sidebar, or to a new window if this one already shows another.
+ */
 async function openAny(path: string) {
   const info = await host.statPath(path).catch(() => null);
-  if (info?.dir) await openFolder(info.path);
-  else await openPath(path);
+  if (!info?.dir) return openPath(path);
+  if (folder && inTauri && info.path !== folder) await host.openInNewWindow(info.path);
+  else await openFolder(info.path);
 }
 
 // ---------- saving ----------
@@ -1831,7 +1851,10 @@ async function boot() {
     });
 
     await win.onCloseRequested(async (e) => {
-      if (!(await prepareToClose())) e.preventDefault();
+      if (await prepareToClose()) return;
+      e.preventDefault();
+      // If this was part of quitting edit2, the quit is off.
+      host.closeCancelled();
     });
 
     await win.onDragDropEvent(async (e) => {
@@ -1846,12 +1869,14 @@ async function boot() {
 
   // Listeners are live, so the backend may now route files to this window.
   const init = await host.initWindow();
+  initialized = true;
   draftsDir = init.draftsDir;
   if (init.notice) toast(init.notice, 6000);
   // In a plain browser there is no backend to remember the folder: use the setting.
   const startFolder = inTauri ? init.folder : prefs.get<string | null>("folder", null);
   if (startFolder && !(await openFolder(startFolder, true)) && !inTauri) prefs.set("folder", null);
   for (const path of init.files) await openPath(path);
+  await syncBackend(true);
   await win?.show();
   await win?.setFocus();
 }
