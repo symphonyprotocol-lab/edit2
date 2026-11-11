@@ -21,6 +21,7 @@ mod preview;
 mod quicklook;
 mod routing;
 mod settings;
+mod update;
 
 use routing::{WinInfo, Wins};
 
@@ -551,6 +552,7 @@ fn focus_if_open(app: AppHandle, window: WebviewWindow, state: tauri::State<'_, 
 /// keeps running, so closing windows from now on forgets their folders again.
 #[tauri::command]
 fn close_cancelled(app: AppHandle, state: tauri::State<'_, AppState>) {
+    update::quit_cancelled(&app);
     if state.quitting.swap(false, Ordering::SeqCst) {
         // Windows already closed during the attempt are gone for good.
         save_open_folders(&app);
@@ -793,12 +795,14 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             notice: Mutex::new(migration.map(|r| r.message())),
             ..Default::default()
         })
         .manage(settings::Settings::default())
         .manage(preview::Sites::default())
+        .manage(update::Updates::default())
         .register_uri_scheme_protocol("preview", |ctx, request| {
             ctx.app_handle().state::<preview::Sites>().serve(&request)
         })
@@ -825,7 +829,9 @@ pub fn run() {
             open_in_new_window,
             focus_if_open,
             close_cancelled,
-            quit
+            quit,
+            update::check_update,
+            update::restart_to_update
         ])
         .setup(|app| {
             if let Ok(dir) = app.path().app_data_dir() {
@@ -850,6 +856,7 @@ pub fn run() {
                 // before setup and has then already created the window.
                 create_window(&handle, Vec::new())?;
             }
+            update::check_on_launch(&handle);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -886,6 +893,10 @@ pub fn run() {
                     api.prevent_exit();
                     close_all(app);
                 }
+                return;
+            }
+            if let tauri::RunEvent::Exit = event {
+                update::on_exit(app);
                 return;
             }
 

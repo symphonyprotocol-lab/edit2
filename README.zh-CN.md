@@ -15,6 +15,10 @@ edit2 的前身是 mdit，原来只能编辑 Markdown。现在可以打开 Markd
 - **macOS**：`.dmg` 同时支持 Apple 芯片和 Intel Mac，需要 macOS 10.13 或更高版本。第一次打开时，在「应用程序」里右键 edit2 →「打开」，或者执行 `xattr -dr com.apple.quarantine /Applications/edit2.app`。
 - **Windows**：下载 `edit2_<版本>_x64-setup.exe` 并运行，需要 64 位 Windows 10 或更高版本。安装到当前用户下，不需要管理员权限；系统里没有 WebView2 时，安装程序会自动安装。安装程序没有代码签名，SmartScreen 拦截时点「更多信息」→「仍要运行」。edit2 只会注册为 Markdown 的默认打开方式，其他格式不改动默认程序，需要时右键文件 →「打开方式」选择 edit2，`.html`、`.svg` 仍由原来的浏览器打开，PDF、图片和 Office 文件仍由原来的程序打开。
 
+### 更新
+
+edit2 启动几秒后会到 GitHub 查看有没有新版本（每天最多一次）；也可以在 macOS 的「edit2 → 检查更新…」或启动页的「检查更新」链接手动检查。发现新版本后会先下载并校验签名，然后询问是否重启使用新版本（有未保存的修改会先询问）；选「稍后」的话，下次退出 edit2 时自动安装。edit2 0.2.0 不能自动更新，需要手动安装一次下一个版本。
+
 ## 支持的格式
 
 | 格式 | 扩展名 | 预览 | 格式化 / 压缩 |
@@ -107,7 +111,13 @@ npm run tauri build -- --target universal-apple-darwin   # 同时支持 Apple �
 cd src-tauri && cargo test                # 编码、预览协议、数据迁移、文件夹列表和窗口分派的测试
 ```
 
-在 GitHub 上发布 release 会运行 [.github/workflows/release-windows.yml](.github/workflows/release-windows.yml)，构建 Windows 安装包并上传到这个 release；也可以手动运行这个工作流并指定 tag，为较早的 release 补上安装包。macOS 的 `.dmg` 仍然用上面的 universal 目标在本地构建。
+发布新版本（先把 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 里的 `version` 改好）：
+
+1. 在 GitHub 上为 tag（例如 `v0.3.0`）创建 release。
+2. 在 Mac 上执行 `scripts/release-mac.sh v0.3.0`：构建 universal 版本，用 `~/.tauri/edit2-updater.key`（密码在 `edit2-updater.key.password`）为更新包签名，然后上传 `.dmg`、更新包和签名。
+3. 发布 release 会运行 [.github/workflows/release-windows.yml](.github/workflows/release-windows.yml)，用仓库 secret `TAURI_SIGNING_PRIVATE_KEY` 和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 构建并签名 Windows 安装包后上传；也可以手动运行这个工作流并指定 tag 重新来一遍。
+
+这两步都会运行 [scripts/publish-update.mjs](scripts/publish-update.mjs)，把各自平台加进这个 release 的 `latest.json`。已安装的 edit2 读取最新 release 里的这个文件，所以 release 正式发布后（草稿和预发布不算）用户才会收到更新。私钥务必保管好：丢了它，以后的版本就无法更新已安装的 edit2。普通的 `npm run tauri build` 不需要私钥。
 
 `npm run dev` 只在浏览器里运行界面，Tauri 调用都用替身代替；在浏览器控制台里执行 `edit2.open("/absolute/path/file.json")` 可以通过开发服务器打开文件，执行 `edit2.openFolder("/absolute/path")`（或点「打开文件夹」链接，它会要求输入路径）可以显示文件夹，目录内容由 `vite.config.ts` 里的一个小中间件列出。开发服务器只提供项目内的文件，所以只能打开项目目录里的文件。
 
@@ -145,8 +155,12 @@ src-tauri/src/
   migrate.rs             一次性复制 mdit 的数据
   menu.rs                macOS 原生菜单
   mac_quit.rs            applicationShouldTerminate 钩子，让程序坞或 AppleScript 发起的退出也能询问
+  update.rs              检查、下载和安装更新
+src-tauri/tauri.release.conf.json  正式发布用：额外生成签过名的更新包
 src-tauri/tauri.windows.conf.json  Windows 打包：NSIS 安装程序，只把 Markdown 设为默认关联
 src-tauri/windows/installer-hooks.nsh  把其他格式加到资源管理器的「打开方式」列表
 scripts/check-formats.mjs  检查插件和文件关联列出的扩展名是否一致
-.github/workflows/release-windows.yml  为每个 release 构建 Windows 安装包
+.github/workflows/release-windows.yml  为每个 release 构建 Windows 安装包和更新包
+scripts/release-mac.sh     构建 macOS 版本和更新包并上传到 release
+scripts/publish-update.mjs 上传签过名的更新包，并加进 release 的 latest.json
 ```

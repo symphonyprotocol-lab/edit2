@@ -16,6 +16,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         true,
         &[
             &PredefinedMenuItem::about(app, Some("关于 edit2"), None)?,
+            &MenuItem::with_id(app, "check_update", "检查更新…", true, None::<&str>)?,
             &sep()?,
             &PredefinedMenuItem::services(app, None)?,
             &sep()?,

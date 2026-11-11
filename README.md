@@ -15,6 +15,10 @@ Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edi
 - **macOS**: the `.dmg` runs on Apple silicon and Intel Macs (macOS 10.13 or later). The first time, right-click edit2 in Applications and choose Open, or run `xattr -dr com.apple.quarantine /Applications/edit2.app`.
 - **Windows**: download and run `edit2_<version>_x64-setup.exe` (64-bit Windows 10 or later). It installs for the current user without administrator rights, and installs WebView2 if it is missing. If SmartScreen stops the unsigned installer, choose More info → Run anyway. edit2 becomes the default app for Markdown only; the other formats are left with their current app and appear under Open with, so your browser keeps `.html` and `.svg` and your PDF reader, image viewer and Office keep their files.
 
+### Updates
+
+edit2 looks for a new release on GitHub a few seconds after launch, at most once a day, and also when you choose edit2 → Check for Updates… on macOS or the Check for updates link on the start screen. A new version is downloaded and its signature checked, then edit2 offers to restart into it (asking first about unsaved changes); if you choose Later, it is installed the next time you quit. edit2 0.2.0 cannot update itself: install the next version by hand once.
+
 ## Formats
 
 | Format | Extensions | Preview | Format / minify |
@@ -107,7 +111,13 @@ npm run tauri build -- --target universal-apple-darwin   # Apple silicon + Intel
 cd src-tauri && cargo test                # encoding, preview protocol, migration, folder listing and window routing tests
 ```
 
-Publishing a GitHub release runs [.github/workflows/release-windows.yml](.github/workflows/release-windows.yml), which builds the Windows installer and attaches it to the release; run the workflow by hand with a tag to add the installer to an older release. The macOS `.dmg` is still built locally with the universal target above.
+Releasing a version (bump `version` in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` first):
+
+1. Create the GitHub release for the tag, e.g. `v0.3.0`.
+2. On a Mac, run `scripts/release-mac.sh v0.3.0`. It builds the universal app, signs the update with the key in `~/.tauri/edit2-updater.key` (password in `edit2-updater.key.password`), and uploads the `.dmg`, the update archive and its signature.
+3. Publishing the release runs [.github/workflows/release-windows.yml](.github/workflows/release-windows.yml), which builds and signs the Windows installer with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets and uploads it; run the workflow by hand with a tag to redo it.
+
+Both steps run [scripts/publish-update.mjs](scripts/publish-update.mjs), which adds its platform to the release's `latest.json`. Installed copies read that file from the latest release, so updates reach users once the release is published (not while it is a draft or prerelease). Keep the private key: without it no future release can update existing installs. Plain `npm run tauri build` does not need the key.
 
 `npm run dev` serves the UI alone in a browser. Tauri calls are stubbed; in the browser console, `edit2.open("/absolute/path/file.json")` opens a file through the dev server, and `edit2.openFolder("/absolute/path")` (or the Open Folder link, which asks for a path) shows a folder, listed by a small middleware in `vite.config.ts`. The dev server only serves files inside the project, so open files from the project's own tree there.
 
@@ -145,8 +155,12 @@ src-tauri/src/
   migrate.rs             one-time copy of mdit's data
   menu.rs                native macOS menu
   mac_quit.rs            applicationShouldTerminate hook so a Dock/AppleScript quit can prompt
+  update.rs              checks for, downloads and installs updates
+src-tauri/tauri.release.conf.json  release builds: adds the signed updater archives
 src-tauri/tauri.windows.conf.json  Windows bundle: NSIS installer, Markdown-only default association
 src-tauri/windows/installer-hooks.nsh  adds the other formats to Explorer's Open with list
 scripts/check-formats.mjs  checks plugins and file associations list the same extensions
-.github/workflows/release-windows.yml  builds the Windows installer for each release
+.github/workflows/release-windows.yml  builds the Windows installer and update for each release
+scripts/release-mac.sh     builds the macOS app and update and uploads them to a release
+scripts/publish-update.mjs uploads a signed update and adds it to the release's latest.json
 ```

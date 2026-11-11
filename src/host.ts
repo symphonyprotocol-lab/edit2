@@ -6,6 +6,7 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getVersion } from "@tauri-apps/api/app";
 import { open as openDialog, save as saveDialog, message, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
@@ -74,6 +75,13 @@ export interface Written {
   /** Canonical path of the file that was written. */
   path: string;
   mtime: number | null;
+}
+
+/** A newer release, downloaded and verified, waiting to be installed. */
+export interface UpdateReady {
+  version: string;
+  /** The version running now. */
+  current: string;
 }
 
 export interface DialogFilter {
@@ -231,6 +239,22 @@ export const host = {
     inTauri ? invoke("file_mtime", { path }) : Promise.resolve(import.meta.env.DEV ? 0 : null),
 
   quit: () => (inTauri ? invoke("quit") : Promise.resolve()),
+
+  /** edit2's own version. */
+  version: (): Promise<string> => (inTauri ? getVersion() : Promise.resolve("dev")),
+
+  /** Look for a newer release and download it; null when this is the latest. */
+  checkUpdate: (): Promise<UpdateReady | null> => (inTauri ? invoke("check_update") : Promise.resolve(null)),
+
+  /** Close every window (each asks about unsaved changes) and relaunch as the new version. */
+  restartToUpdate: () => (inTauri ? invoke("restart_to_update") : Promise.resolve()),
+
+  /** Offer a downloaded update: true to restart into it now. */
+  async offerUpdate(u: UpdateReady): Promise<boolean> {
+    const body = `当前版本是 ${u.current}。现在重启即可使用新版本，有未保存的修改会先询问。\n\n选“稍后”的话，退出 edit2 时会自动安装。`;
+    if (!inTauri) return confirm(body);
+    return confirmDialog(body, { title: `edit2 ${u.version} 已下载`, kind: "info", okLabel: "立即重启", cancelLabel: "稍后" });
+  },
 
   async pickFile(filters: DialogFilter[]): Promise<string | null> {
     if (!inTauri) return null;

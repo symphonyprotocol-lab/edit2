@@ -33,7 +33,7 @@ import {
   type RenderResult,
   type BinaryFile,
 } from "./formats";
-import { host, inTauri, isMac, TooLargeError, UnmappableError, type DialogFilter, type FileData } from "./host";
+import { host, inTauri, isMac, TooLargeError, UnmappableError, type DialogFilter, type FileData, type UpdateReady } from "./host";
 import { TabBar, type TabBarHandlers } from "./tabs";
 import { FolderTree } from "./sidebar";
 import { showMenu, closeMenu, type MenuEntry } from "./popup";
@@ -2692,6 +2692,32 @@ async function prepareToClose(): Promise<boolean> {
   return true;
 }
 
+// ---------- updates ----------
+
+let checkingUpdate = false;
+
+/** Menu item / launch screen link: look for a new version now. */
+async function checkForUpdates() {
+  if (checkingUpdate) return;
+  checkingUpdate = true;
+  toast("正在检查更新…", 120_000);
+  try {
+    const ready = await host.checkUpdate();
+    toastEl.classList.remove("show");
+    if (ready) await offerUpdate(ready);
+    else toast(`edit2 ${await host.version()} 已是最新版本`, 3000);
+  } catch (e) {
+    toastEl.classList.remove("show");
+    await host.alert("检查更新失败", String(e));
+  } finally {
+    checkingUpdate = false;
+  }
+}
+
+async function offerUpdate(ready: UpdateReady) {
+  if (await host.offerUpdate(ready)) await host.restartToUpdate();
+}
+
 // ---------- commands ----------
 
 const commands: Record<string, () => unknown> = {
@@ -2728,6 +2754,7 @@ const commands: Record<string, () => unknown> = {
   toggle_outline: toggleOutline,
   format_doc: () => runFormatter("format"),
   minify_doc: () => runFormatter("minify"),
+  check_update: checkForUpdates,
 };
 
 // On macOS the native menu owns these shortcuts; elsewhere we handle them here.
@@ -2793,6 +2820,8 @@ for (const b of document.querySelectorAll<HTMLButtonElement>(".seg button")) {
 $("btn-new").addEventListener("click", startNew);
 $("btn-open").addEventListener("click", openViaDialog);
 $("btn-open-folder").addEventListener("click", openFolderViaDialog);
+$("btn-update").addEventListener("click", checkForUpdates);
+host.version().then((v) => ($("app-version").textContent = `edit2 ${v}`));
 for (const k of document.querySelectorAll<HTMLElement>("kbd[data-key]")) {
   k.textContent = isMac ? `⌘${k.dataset.key}` : `Ctrl+${k.dataset.key}`;
 }
@@ -2820,6 +2849,8 @@ async function boot() {
   if (win) {
     await host.listen<string>("menu", (id) => commands[id]?.());
     await host.listen<string>("open-path", (path) => openPath(path));
+    // Found and downloaded by the check at launch.
+    await host.listen<UpdateReady>("update-ready", offerUpdate);
     await host.listen<string>("open-folder", (path) => openFolder(path));
     // Another window changed a preference.
     await host.listen<{ key: string; value: unknown }>("setting-changed", ({ key, value }) => {
