@@ -805,6 +805,103 @@ function syncEditorFromPreview() {
 view.scrollDOM.addEventListener("scroll", syncPreviewFromEditor, { passive: true });
 previewScroll.addEventListener("scroll", syncEditorFromPreview, { passive: true });
 
+// ---------- split divider ----------
+
+/**
+ * The editor's share of the split, as a fraction so it survives window
+ * resizes. One ratio for the whole app (not per format): tabs share one
+ * layout, and the divider jumping on every tab switch would be distracting.
+ */
+const divider = $("split-divider");
+/** Matches the panes' min-width in split mode (styles.css). */
+const SPLIT_MIN_PX = 200;
+let splitRatio = 0.5;
+
+const validRatio = (v: unknown) => (typeof v === "number" && v > 0.05 && v < 0.95 ? v : 0.5);
+
+/** Width the two panes share, and where it starts. */
+function splitSpan() {
+  const left = editorEl.getBoundingClientRect().left;
+  const width = previewScroll.getBoundingClientRect().right - left - divider.offsetWidth;
+  return { left, width };
+}
+
+function clampRatio(r: number, width = splitSpan().width): number {
+  const min = width > 0 ? Math.min(0.5, SPLIT_MIN_PX / width) : 0.15;
+  return Math.min(1 - min, Math.max(min, r));
+}
+
+function applySplit(r: number) {
+  splitRatio = r;
+  app.style.setProperty("--split", String(r));
+  divider.setAttribute("aria-valuenow", String(Math.round(r * 100)));
+  if (mode !== "split") return;
+  // Wrapping changes on both sides: re-measure, then line the preview up again.
+  anchorsMeasured = false;
+  view.requestMeasure();
+  requestAnimationFrame(() => {
+    syncSource = null;
+    syncPreviewFromEditor();
+  });
+}
+
+function setSplit(r: number) {
+  applySplit(r);
+  prefs.set("splitRatio", Math.round(r * 10_000) / 10_000);
+}
+
+divider.setAttribute("aria-valuemin", "0");
+divider.setAttribute("aria-valuemax", "100");
+
+divider.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  divider.focus({ preventScroll: true });
+  divider.setPointerCapture(e.pointerId);
+  // The overlay class also keeps preview iframes from swallowing the pointer.
+  app.classList.add("is-resizing");
+  const { left, width } = splitSpan();
+  const start = splitRatio;
+  let next = start;
+  let frame = 0;
+  const move = (ev: PointerEvent) => {
+    next = clampRatio((ev.clientX - left - divider.offsetWidth / 2) / width, width);
+    if (!frame) frame = requestAnimationFrame(() => ((frame = 0), applySplit(next)));
+  };
+  const end = () => {
+    divider.removeEventListener("pointermove", move);
+    divider.removeEventListener("pointerup", end);
+    divider.removeEventListener("pointercancel", end);
+    divider.removeEventListener("lostpointercapture", end);
+    if (divider.hasPointerCapture(e.pointerId)) divider.releasePointerCapture(e.pointerId);
+    cancelAnimationFrame(frame);
+    app.classList.remove("is-resizing");
+    if (next !== start) setSplit(next);
+  };
+  divider.addEventListener("pointermove", move);
+  divider.addEventListener("pointerup", end);
+  divider.addEventListener("pointercancel", end);
+  divider.addEventListener("lostpointercapture", end);
+});
+
+divider.addEventListener("dblclick", () => setSplit(0.5));
+
+divider.addEventListener("keydown", (e) => {
+  const step = e.shiftKey ? 0.1 : 0.02;
+  const target = (
+    {
+      ArrowLeft: splitRatio - step,
+      ArrowRight: splitRatio + step,
+      Home: 0,
+      End: 1,
+      Enter: 0.5,
+    } as Record<string, number>
+  )[e.key];
+  if (target === undefined) return;
+  e.preventDefault();
+  setSplit(e.key === "Enter" ? 0.5 : clampRatio(target));
+});
+
 // ---------- view modes & font size ----------
 
 /** View last used for each format (format id → mode). */
@@ -1639,6 +1736,7 @@ async function boot() {
   app.classList.add(isMac && inTauri ? "platform-mac" : "platform-other");
   await prefs.load();
   applyFont(prefs.get("fontSize", 15));
+  applySplit(validRatio(prefs.get("splitRatio", 0.5)));
   applyMode(preferredMode(doc.format));
   renderRecent();
   refreshChrome();
@@ -1652,6 +1750,7 @@ async function boot() {
       if (value === null) delete settings[key];
       else settings[key] = value;
       if (key === "recent") renderRecent();
+      if (key === "splitRatio") applySplit(validRatio(value));
     });
 
     await win.onCloseRequested(async (e) => {
