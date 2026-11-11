@@ -142,6 +142,8 @@ interface Tab {
   previewWanted: boolean;
   /** Size of the file on disk when it was read, in bytes. */
   size: number;
+  /** The editor's share of the split view; every new tab starts at half and half. */
+  split: number;
 }
 
 const AUTOSAVE_DELAY = 800;
@@ -250,6 +252,7 @@ function createTab(text = "", started = true, format = formatOf(null)): Tab {
     readOnly: false,
     previewWanted: false,
     size: 0,
+    split: 0.5,
   };
 }
 
@@ -819,6 +822,100 @@ function syncEditorFromPreview() {
 view.scrollDOM.addEventListener("scroll", syncPreviewFromEditor, { passive: true });
 previewScroll.addEventListener("scroll", syncEditorFromPreview, { passive: true });
 
+// ---------- split divider ----------
+
+/**
+ * Each tab keeps its own divider position (`Tab.split`, a fraction so it
+ * survives window resizes); a new tab starts at half and half. It is not
+ * saved: after a restart every tab starts at half and half again.
+ */
+const divider = $("split-divider");
+/** Matches the panes' min-width in split mode (styles.css). */
+const SPLIT_MIN_PX = 200;
+
+/** Width the two panes share, and where it starts. */
+function splitSpan() {
+  const left = editorEl.getBoundingClientRect().left;
+  const width = previewScroll.getBoundingClientRect().right - left - divider.offsetWidth;
+  return { left, width };
+}
+
+function clampRatio(r: number, width = splitSpan().width): number {
+  const min = width > 0 ? Math.min(0.5, SPLIT_MIN_PX / width) : 0.15;
+  return Math.min(1 - min, Math.max(min, r));
+}
+
+/** Lay the panes out at the active tab's ratio (on every layout change). */
+function layoutSplit() {
+  app.style.setProperty("--split", String(doc.split));
+  divider.setAttribute("aria-valuenow", String(Math.round(doc.split * 100)));
+}
+
+/** Move the active tab's divider. */
+function applySplit(r: number) {
+  doc.split = r;
+  layoutSplit();
+  if (mode !== "split") return;
+  // Wrapping changes on both sides: re-measure, then line the preview up again.
+  anchorsMeasured = false;
+  view.requestMeasure();
+  requestAnimationFrame(() => {
+    syncSource = null;
+    syncPreviewFromEditor();
+  });
+}
+
+divider.setAttribute("aria-valuemin", "0");
+divider.setAttribute("aria-valuemax", "100");
+
+divider.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  divider.focus({ preventScroll: true });
+  divider.setPointerCapture(e.pointerId);
+  // The overlay class also keeps preview iframes from swallowing the pointer.
+  app.classList.add("is-resizing");
+  const { left, width } = splitSpan();
+  let next = doc.split;
+  let frame = 0;
+  const move = (ev: PointerEvent) => {
+    next = clampRatio((ev.clientX - left - divider.offsetWidth / 2) / width, width);
+    if (!frame) frame = requestAnimationFrame(() => ((frame = 0), applySplit(next)));
+  };
+  const end = () => {
+    divider.removeEventListener("pointermove", move);
+    divider.removeEventListener("pointerup", end);
+    divider.removeEventListener("pointercancel", end);
+    divider.removeEventListener("lostpointercapture", end);
+    if (divider.hasPointerCapture(e.pointerId)) divider.releasePointerCapture(e.pointerId);
+    cancelAnimationFrame(frame);
+    app.classList.remove("is-resizing");
+    if (next !== doc.split) applySplit(next);
+  };
+  divider.addEventListener("pointermove", move);
+  divider.addEventListener("pointerup", end);
+  divider.addEventListener("pointercancel", end);
+  divider.addEventListener("lostpointercapture", end);
+});
+
+divider.addEventListener("dblclick", () => applySplit(0.5));
+
+divider.addEventListener("keydown", (e) => {
+  const step = e.shiftKey ? 0.1 : 0.02;
+  const target = (
+    {
+      ArrowLeft: doc.split - step,
+      ArrowRight: doc.split + step,
+      Home: 0,
+      End: 1,
+      Enter: 0.5,
+    } as Record<string, number>
+  )[e.key];
+  if (target === undefined) return;
+  e.preventDefault();
+  applySplit(e.key === "Enter" ? 0.5 : clampRatio(target));
+});
+
 // ---------- view modes & font size ----------
 
 /** View last used for each format (format id → mode). */
@@ -836,6 +933,7 @@ function applyMode(next: Mode) {
   if (!doc.format.preview) next = "write";
   mode = next;
   app.dataset.mode = next;
+  layoutSplit();
   anchorsMeasured = false;
   for (const b of document.querySelectorAll<HTMLButtonElement>(".seg button")) {
     b.setAttribute("aria-checked", String(b.dataset.mode === next));
@@ -1270,6 +1368,7 @@ async function openPath(path: string) {
       tab.missing = tab.dirty = tab.failed = false;
       tab.editorScroll = null;
       tab.previewTop = 0;
+      tab.split = 0.5;
       tab.format = format;
       tab.wrap = true;
       takeFileData(tab, data);
