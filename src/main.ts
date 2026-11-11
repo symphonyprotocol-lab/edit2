@@ -642,6 +642,8 @@ function binaryFile(path: string, tab: Tab): BinaryFile {
     size: tab.size,
     version: `${tab.mtime}:${tab.size}`,
     read: (offset, length) => host.readBytes(path, offset, length),
+    systemPreview: () => host.systemPreview(path),
+    openInApp: () => void host.openInDefaultApp(path).catch((err) => host.alert("无法用其他程序打开", String(err))),
   };
 }
 

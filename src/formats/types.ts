@@ -109,6 +109,10 @@ export interface BinaryFile {
   version: string;
   /** Up to `length` bytes from `offset`. */
   read(offset: number, length: number): Promise<Uint8Array>;
+  /** The system's own rendering as self-contained HTML (macOS Quick Look, Office files), or null. */
+  systemPreview(): Promise<string | null>;
+  /** Open the file in the system's default app for it. */
+  openInApp(): void;
 }
 
 export interface FormatOptions {

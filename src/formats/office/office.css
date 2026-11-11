@@ -1,0 +1,76 @@
+/* Office viewers, on the shared viewer stage. Documents and slides stay
+   white in dark mode, like printed pages. */
+.office-bar {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.office-note { font-size: 12px; color: var(--ink-3); }
+
+.office-legacy {
+  max-width: 420px;
+  margin: 18vh auto 0;
+  padding: 24px 28px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+.office-legacy-title { color: var(--ink); font-size: 14px; font-weight: 600; }
+
+/* Word (docx-preview): its grey wrapper becomes the desk. */
+.word-stage .docx-wrapper { background: transparent; padding: 20px 0 32px; }
+.word-stage .docx-wrapper > section.docx { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); margin-bottom: 20px; }
+
+/* PowerPoint: Quick Look's page scaled to the width, or the outline. */
+.slides-box { margin: 16px auto 32px; transform-origin: 0 0; }
+.slides-box iframe { border: 0; display: block; background: transparent; transform-origin: 0 0; }
+.ppt-outline { max-width: 820px; margin: 0 auto; padding: 16px 16px 40px; }
+.ppt-slide {
+  background: #fff;
+  color: #1c1b19;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  padding: 20px 28px 24px;
+  margin-bottom: 18px;
+}
+.ppt-slide-n { font-size: 11px; color: #9a958d; margin-bottom: 6px; }
+.ppt-slide h3 { margin: 0 0 10px; font-size: 20px; }
+.ppt-slide p { margin: 0 0 6px; line-height: 1.55; }
+.ppt-slide img { max-width: 100%; max-height: 420px; display: block; margin: 10px 0; }
+.ppt-slide table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+.ppt-slide td { border: 1px solid #d8d4cc; padding: 4px 8px; }
+.ppt-slide .ppt-notes { margin-top: 12px; padding-top: 8px; border-top: 1px dashed #d8d4cc; color: #5e5a54; font-size: 13px; }
+
+/* Excel: the CSV table's look, with sheet tabs in the bar. */
+.xl-stage { font-size: calc(var(--fs) - 2px); background: var(--bg); }
+.xl-stage .office-bar { justify-content: flex-start; }
+.xl-stage .office-note { margin-left: auto; }
+.xl-tabs { display: flex; gap: 2px; flex-wrap: wrap; }
+.xl-tabs button {
+  border: 1px solid transparent;
+  background: none;
+  border-radius: 5px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.xl-tabs button:hover { background: var(--hover); }
+.xl-tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--ink); border-color: var(--accent-soft); }
+.xl-tabs button.hidden-sheet { font-style: italic; color: var(--ink-3); }
+.xl-wrap { width: max-content; min-width: 100%; padding: 0 0 24px; }
+.xl-table th { text-align: center; font-weight: 500; top: var(--bar-h, 0px); }
+.xl-table td.merged { text-align: center; vertical-align: middle; }
+.xl-table td.merged.num { text-align: right; }
+.xl-empty { padding: 24px; color: var(--ink-3); }

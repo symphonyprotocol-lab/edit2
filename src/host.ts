@@ -204,6 +204,14 @@ export const host = {
     return got === length ? out : out.slice(0, got);
   },
 
+  /** macOS Quick Look's HTML for an Office file; null where there is none. */
+  systemPreview: (path: string): Promise<string | null> =>
+    inTauri ? invoke<string | null>("system_preview", { path }) : Promise.resolve(null),
+
+  /** Open a viewer's file (PDF, image, Office) in the system's default app. */
+  openInDefaultApp: (path: string): Promise<void> =>
+    inTauri ? invoke("open_in_default_app", { path }) : Promise.resolve(void window.alert(`在默认程序中打开：${path}`)),
+
   async writeFile(path: string, content: string, encoding = "UTF-8", bom = false): Promise<Written> {
     if (!inTauri) return { path, mtime: null };
     try {

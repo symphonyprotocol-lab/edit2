@@ -18,6 +18,7 @@ mod mac_quit;
 mod menu;
 mod migrate;
 mod preview;
+mod quicklook;
 mod routing;
 mod settings;
 
@@ -601,6 +602,29 @@ fn read_bytes(path: String, offset: u64, length: u64) -> Result<tauri::ipc::Resp
     binary::read_range(Path::new(&path), offset, length).map(tauri::ipc::Response::new)
 }
 
+/// A system rendering of an Office document as self-contained HTML (macOS
+/// Quick Look), or None where the system has none.
+#[tauri::command]
+async fn system_preview(path: String) -> Result<Option<String>, String> {
+    let p = PathBuf::from(&path);
+    if binary::kind_of(&p) != Some(binary::Kind::Office) {
+        return Err("只有 Office 文件有系统预览".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || quicklook::preview_html(&p))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Open a file the viewers show (PDF, image, Office) in the system's default app for it.
+#[tauri::command]
+fn open_in_default_app(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if binary::kind_of(Path::new(&path)).is_none() || !Path::new(&path).is_file() {
+        return Err("只能用其他程序打开 PDF、图片和 Office 文件".into());
+    }
+    app.opener().open_path(&path, None::<&str>).map_err(|e| e.to_string())
+}
+
 /// Write `content` in `encoding` (UTF-8 by default). Fails with `UNMAPPABLE`,
 /// writing nothing, if the encoding cannot represent every character.
 #[tauri::command]
@@ -733,6 +757,8 @@ pub fn run() {
             read_file,
             open_binary,
             read_bytes,
+            system_preview,
+            open_in_default_app,
             write_file,
             delete_draft,
             allow_assets,

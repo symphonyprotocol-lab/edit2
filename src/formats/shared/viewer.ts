@@ -56,3 +56,31 @@ export function onPinchZoom(
     last = g.scale;
   }, { signal });
 }
+
+/**
+ * Run `change` (a zoom) so that the point of `el` under (x, y) stays under it;
+ * the stage's centre by default.
+ */
+export function keepPoint(stage: HTMLElement, el: HTMLElement, change: () => void, x?: number, y?: number) {
+  const box = stage.getBoundingClientRect();
+  x ??= box.left + box.width / 2;
+  y ??= box.top + box.height / 2;
+  const before = el.getBoundingClientRect();
+  const fx = before.width ? (x - before.left) / before.width : 0;
+  const fy = before.height ? (y - before.top) / before.height : 0;
+  change();
+  const after = el.getBoundingClientRect();
+  stage.scrollLeft += after.left + fx * after.width - x;
+  stage.scrollTop += after.top + fy * after.height - y;
+}
+
+/** Index of the last of `items` whose top is above a line 30% down the stage (the one being read). */
+export function currentIndex(stage: HTMLElement, items: ArrayLike<Element>, offsetTop = 0): number {
+  const line = stage.getBoundingClientRect().top + stage.clientHeight * 0.3;
+  let at = 0;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].getBoundingClientRect().top + offsetTop <= line) at = i;
+    else break;
+  }
+  return at;
+}

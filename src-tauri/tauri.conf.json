@@ -123,6 +123,27 @@
         "description": "图片",
         "role": "Viewer",
         "rank": "Alternate"
+      },
+      {
+        "ext": ["docx", "doc"],
+        "name": "Word Document",
+        "description": "Word 文档",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["xlsx", "xlsm", "ods", "xls"],
+        "name": "Spreadsheet",
+        "description": "电子表格",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["pptx", "ppt"],
+        "name": "Presentation",
+        "description": "演示文稿",
+        "role": "Viewer",
+        "rank": "Alternate"
       }
     ]
   }

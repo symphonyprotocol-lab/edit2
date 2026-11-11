@@ -1,4 +1,4 @@
-//! Binary files shown by a viewer (PDF, images). They never go through the
+//! Binary files shown by a viewer (PDF, images, Office documents). They never go through the
 //! text codec: the frontend asks what the file is, then either loads it
 //! through the asset protocol (images) or reads byte ranges of it as the
 //! viewer needs them (PDF), so a large document opens without being read
@@ -13,6 +13,7 @@ use std::path::Path;
 pub enum Kind {
     Pdf,
     Image,
+    Office,
 }
 
 const PDF_EXTS: &[&str] = &["pdf"];
@@ -21,6 +22,11 @@ const PDF_EXTS: &[&str] = &["pdf"];
 pub const IMAGE_EXTS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "icns", "avif", "tif", "tiff", "heic", "heif",
 ];
+
+/// Office documents: the zip-based ones (Office Open XML, OpenDocument) and
+/// the legacy binary ones (OLE compound files), which only get a button to
+/// open them in another app.
+pub const OFFICE_EXTS: &[&str] = &["docx", "xlsx", "xlsm", "ods", "pptx", "doc", "xls", "ppt"];
 
 /// Largest range one call returns.
 pub const MAX_RANGE: u64 = 64 * 1024 * 1024;
@@ -34,6 +40,8 @@ pub fn kind_of(path: &Path) -> Option<Kind> {
         Some(Kind::Pdf)
     } else if IMAGE_EXTS.contains(&ext.as_str()) {
         Some(Kind::Image)
+    } else if OFFICE_EXTS.contains(&ext.as_str()) {
+        Some(Kind::Office)
     } else {
         None
     }
@@ -65,6 +73,12 @@ pub fn looks_like_image(head: &[u8]) -> bool {
                 .any(|brand| at(8, brand)))
 }
 
+/// Whether the start of a file looks like an Office document: a zip archive
+/// (.docx, .xlsx, .pptx, .ods) or an OLE compound file (.doc, .xls, .ppt).
+pub fn looks_like_office(head: &[u8]) -> bool {
+    head.starts_with(b"PK\x03\x04") || head.starts_with(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1")
+}
+
 fn head_of(path: &Path) -> Result<Vec<u8>, String> {
     let mut head = Vec::with_capacity(HEAD);
     File::open(path)
@@ -77,20 +91,22 @@ fn head_of(path: &Path) -> Result<Vec<u8>, String> {
 
 /// Check that `path` is a file of a viewable kind, by extension and content.
 pub fn check(path: &Path) -> Result<Kind, String> {
-    let kind = kind_of(path).ok_or("只能以只读方式查看 PDF 和图片文件")?;
+    let kind = kind_of(path).ok_or("只能以只读方式查看 PDF、图片和 Office 文件")?;
     let head = head_of(path)?;
     match kind {
         Kind::Pdf if looks_like_pdf(&head) => Ok(kind),
         Kind::Pdf => Err("这不是 PDF 文件（缺少 %PDF 文件头）".into()),
         Kind::Image if looks_like_image(&head) => Ok(kind),
         Kind::Image => Err("这不是可以识别的图片文件".into()),
+        Kind::Office if looks_like_office(&head) => Ok(kind),
+        Kind::Office => Err("这不是可以识别的 Office 文件".into()),
     }
 }
 
 /// Up to `length` bytes from `offset`; shorter at the end of the file.
 pub fn read_range(path: &Path, offset: u64, length: u64) -> Result<Vec<u8>, String> {
     if kind_of(path).is_none() {
-        return Err("只能以字节方式读取 PDF 和图片文件".into());
+        return Err("只能以字节方式读取 PDF、图片和 Office 文件".into());
     }
     if length > MAX_RANGE {
         return Err(format!("一次最多读取 {MAX_RANGE} 字节"));
@@ -122,6 +138,8 @@ mod tests {
         assert_eq!(kind_of(Path::new("/a/b.JPG")), Some(Kind::Image));
         assert_eq!(kind_of(Path::new("/a/b.icns")), Some(Kind::Image));
         assert_eq!(kind_of(Path::new("/a/b.svg")), None);
+        assert_eq!(kind_of(Path::new("/a/b.DOCX")), Some(Kind::Office));
+        assert_eq!(kind_of(Path::new("/a/b.ppt")), Some(Kind::Office));
         assert_eq!(kind_of(Path::new("/a/pdf")), None);
     }
 
@@ -165,6 +183,9 @@ mod tests {
         // Named .jpg but a PNG inside: still an image.
         assert_eq!(check(&temp("misnamed.jpg", b"\x89PNG\r\n\x1a\n\0\0")), Ok(Kind::Image));
         assert!(check(&temp("fake.png", b"not an image")).is_err());
+        assert_eq!(check(&temp("ok.docx", b"PK\x03\x04\x14\0")), Ok(Kind::Office));
+        assert_eq!(check(&temp("old.xls", b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1\0")), Ok(Kind::Office));
+        assert!(check(&temp("fake.pptx", b"<html>")).is_err());
     }
 
     #[test]

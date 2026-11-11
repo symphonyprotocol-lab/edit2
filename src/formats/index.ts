@@ -14,6 +14,7 @@ import { html } from "./html";
 import { codeFormats } from "./code";
 import { pdf } from "./pdf";
 import { image } from "./image";
+import { word, excel, powerpoint } from "./office";
 
 register(markdown, { untitled: true });
 register(plainText, { fallback: true });
@@ -26,6 +27,9 @@ register(html);
 for (const code of codeFormats) register(code);
 register(pdf);
 register(image);
+register(word);
+register(excel);
+register(powerpoint);
 
 export * from "./registry";
 export * from "./types";
