@@ -114,7 +114,11 @@ cd src-tauri && cargo test                # encoding, preview protocol, migratio
 Releasing a version (bump `version` in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` first):
 
 1. Create the GitHub release for the tag, e.g. `v0.3.0`.
-2. On a Mac, run `scripts/release-mac.sh v0.3.0`. It builds the universal app, signs the update with the key in `~/.tauri/edit2-updater.key` (password in `edit2-updater.key.password`), and uploads the `.dmg`, the update archive and its signature.
+2. On a Mac, run `scripts/release-mac.sh v0.3.0`. It builds the universal app and signs it with the first Developer ID Application certificate in the keychain (set `APPLE_SIGNING_IDENTITY` to pick another), has Apple notarize the `.dmg` and staples the tickets, signs the update with the key in `~/.tauri/edit2-updater.key` (password in `edit2-updater.key.password`), and uploads the `.dmg`, the update archive and its signature. Add `--no-publish` to build and notarize without uploading. Notarization uses credentials stored once per Mac in a keychain profile (`EDIT2_NOTARY_PROFILE` picks another name than `edit2-notary`):
+
+   ```bash
+   xcrun notarytool store-credentials edit2-notary
+   ```
 3. Publishing the release runs [.github/workflows/release-windows.yml](.github/workflows/release-windows.yml), which builds and signs the Windows installer with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets and uploads it; run the workflow by hand with a tag to redo it.
 
 Both steps run [scripts/publish-update.mjs](scripts/publish-update.mjs), which adds its platform to the release's `latest.json`. Installed copies read that file from the latest release, so updates reach users once the release is published (not while it is a draft or prerelease). Keep the private key: without it no future release can update existing installs. Plain `npm run tauri build` does not need the key.
@@ -161,6 +165,6 @@ src-tauri/tauri.windows.conf.json  Windows bundle: NSIS installer, Markdown-only
 src-tauri/windows/installer-hooks.nsh  adds the other formats to Explorer's Open with list
 scripts/check-formats.mjs  checks plugins and file associations list the same extensions
 .github/workflows/release-windows.yml  builds the Windows installer and update for each release
-scripts/release-mac.sh     builds the macOS app and update and uploads them to a release
+scripts/release-mac.sh     builds, signs and notarizes the macOS app and update and uploads them
 scripts/publish-update.mjs uploads a signed update and adds it to the release's latest.json
 ```

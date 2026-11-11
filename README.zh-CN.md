@@ -114,7 +114,11 @@ cd src-tauri && cargo test                # 编码、预览协议、数据迁移
 发布新版本（先把 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 里的 `version` 改好）：
 
 1. 在 GitHub 上为 tag（例如 `v0.3.0`）创建 release。
-2. 在 Mac 上执行 `scripts/release-mac.sh v0.3.0`：构建 universal 版本，用 `~/.tauri/edit2-updater.key`（密码在 `edit2-updater.key.password`）为更新包签名，然后上传 `.dmg`、更新包和签名。
+2. 在 Mac 上执行 `scripts/release-mac.sh v0.3.0`：构建 universal 版本，用钥匙串里第一个 Developer ID Application 证书签名（设置 `APPLE_SIGNING_IDENTITY` 可以换一个），把 `.dmg` 交给 Apple 公证并装订公证票据，用 `~/.tauri/edit2-updater.key`（密码在 `edit2-updater.key.password`）为更新包签名，然后上传 `.dmg`、更新包和签名。加 `--no-publish` 只构建和公证，不上传。公证凭据每台 Mac 只需存一次，放在钥匙串的 profile 里（用 `EDIT2_NOTARY_PROFILE` 可以换掉默认名 `edit2-notary`）：
+
+   ```bash
+   xcrun notarytool store-credentials edit2-notary
+   ```
 3. 发布 release 会运行 [.github/workflows/release-windows.yml](.github/workflows/release-windows.yml)，用仓库 secret `TAURI_SIGNING_PRIVATE_KEY` 和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 构建并签名 Windows 安装包后上传；也可以手动运行这个工作流并指定 tag 重新来一遍。
 
 这两步都会运行 [scripts/publish-update.mjs](scripts/publish-update.mjs)，把各自平台加进这个 release 的 `latest.json`。已安装的 edit2 读取最新 release 里的这个文件，所以 release 正式发布后（草稿和预发布不算）用户才会收到更新。私钥务必保管好：丢了它，以后的版本就无法更新已安装的 edit2。普通的 `npm run tauri build` 不需要私钥。
@@ -161,6 +165,6 @@ src-tauri/tauri.windows.conf.json  Windows 打包：NSIS 安装程序，只把 M
 src-tauri/windows/installer-hooks.nsh  把其他格式加到资源管理器的「打开方式」列表
 scripts/check-formats.mjs  检查插件和文件关联列出的扩展名是否一致
 .github/workflows/release-windows.yml  为每个 release 构建 Windows 安装包和更新包
-scripts/release-mac.sh     构建 macOS 版本和更新包并上传到 release
+scripts/release-mac.sh     构建、签名并公证 macOS 版本和更新包，上传到 release
 scripts/publish-update.mjs 上传签过名的更新包，并加进 release 的 latest.json
 ```
