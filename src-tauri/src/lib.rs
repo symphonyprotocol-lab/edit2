@@ -96,6 +96,8 @@ struct FileData {
     bom: bool,
     /// The encoding was detected from little evidence.
     guessed: bool,
+    /// Some bytes did not decode: the text must not be written back over the file.
+    lossy: bool,
     size: u64,
 }
 
@@ -320,12 +322,34 @@ fn front_window(app: &AppHandle) -> Option<WebviewWindow> {
 
 /// Replace `path` atomically: write a sibling temp file, then rename it over
 /// the original, so a failed or interrupted save never truncates the file.
+///
+/// A rename puts a new file in place of the old one, so what belonged to the
+/// old one is looked after here: a file we may not write is refused (renaming
+/// only needs a writable folder), a file with other hard links is written in
+/// place (the links must keep seeing one file), and its permissions and, on
+/// macOS, extended attributes and ACL (Finder tags, quarantine) are carried over.
 pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     // Write through symlinks so the link itself is not replaced by a file.
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
         return std::fs::write(&target, content);
     };
+    let existing = std::fs::metadata(&target).ok();
+    if existing.is_some() {
+        // Opening for writing changes nothing, and fails as a plain write would.
+        if let Err(e) = std::fs::OpenOptions::new().write(true).open(&target) {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                return Err(e);
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if existing.as_ref().is_some_and(|m| m.nlink() > 1) {
+            return std::fs::write(&target, content);
+        }
+    }
     let tmp = dir.join(format!(".{}.edit2-{}.tmp", name.to_string_lossy(), std::process::id()));
 
     let mut file = match std::fs::File::create(&tmp) {
@@ -339,7 +363,8 @@ pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     let result = (|| {
         file.write_all(content)?;
         file.sync_all()?;
-        if let Ok(meta) = std::fs::metadata(&target) {
+        if let Some(meta) = &existing {
+            copy_attributes(&target, &tmp);
             std::fs::set_permissions(&tmp, meta.permissions())?;
         }
         std::fs::rename(&tmp, &target)
@@ -349,6 +374,30 @@ pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     }
     result
 }
+
+/// Copy extended attributes and the ACL from `from` to `to` (best effort).
+#[cfg(target_os = "macos")]
+fn copy_attributes(from: &Path, to: &Path) {
+    use std::ffi::{c_char, c_int, c_void, CString};
+    use std::os::unix::ffi::OsStrExt;
+
+    extern "C" {
+        fn copyfile(from: *const c_char, to: *const c_char, state: *mut c_void, flags: u32) -> c_int;
+    }
+    const COPYFILE_ACL: u32 = 1 << 0;
+    const COPYFILE_XATTR: u32 = 1 << 2;
+
+    let (Ok(from), Ok(to)) = (CString::new(from.as_os_str().as_bytes()), CString::new(to.as_os_str().as_bytes())) else {
+        return;
+    };
+    // SAFETY: both are valid NUL-terminated paths; a null state is allowed.
+    unsafe {
+        copyfile(from.as_ptr(), to.as_ptr(), std::ptr::null_mut(), COPYFILE_ACL | COPYFILE_XATTR);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn copy_attributes(_from: &Path, _to: &Path) {}
 
 /// Files a preview may load: images (also those the image viewer shows), and the styles and fonts of HTML pages.
 const ASSET_EXTS: &[&str] = &[
@@ -565,6 +614,7 @@ fn read_file(path: String, encoding: Option<String>, force: Option<bool>) -> Res
         encoding: decoded.encoding.to_string(),
         bom: decoded.bom,
         guessed: decoded.guessed,
+        lossy: decoded.lossy,
         size,
     })
 }
@@ -705,9 +755,10 @@ fn set_setting(
 }
 
 /// Publish an HTML document for the script-enabled preview (see preview.rs).
+/// Returns the path of its URL under the preview origin.
 #[tauri::command]
-fn serve_preview(sites: tauri::State<'_, preview::Sites>, token: String, path: Option<String>, html: String) {
-    sites.put(token, path, html);
+fn serve_preview(sites: tauri::State<'_, preview::Sites>, token: String, path: Option<String>, html: String) -> String {
+    sites.put(token, path, html)
 }
 
 #[tauri::command]
@@ -858,4 +909,75 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("edit2-write-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn writes_new_and_existing_files_leaving_no_temp_file() {
+        let dir = scratch("plain");
+        let file = dir.join("a.txt");
+        write_atomic(&file, b"one").unwrap();
+        write_atomic(&file, b"two").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"two");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_file_is_refused_and_keeps_its_content() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("readonly");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "orig").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let err = write_atomic(&file, b"new").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(std::fs::read(&file).unwrap(), b"orig");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_links_keep_seeing_the_same_file_and_modes_are_kept() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("links");
+        let (file, link) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&file, "orig").unwrap();
+        std::fs::hard_link(&file, &link).unwrap();
+        write_atomic(&file, b"new").unwrap();
+        assert_eq!(std::fs::read(&link).unwrap(), b"new");
+
+        let script = dir.join("run.sh");
+        std::fs::write(&script, "x").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o750)).unwrap();
+        write_atomic(&script, b"y").unwrap();
+        assert_eq!(std::fs::metadata(&script).unwrap().permissions().mode() & 0o777, 0o750);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn extended_attributes_survive_a_save() {
+        let dir = scratch("xattr");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "orig").unwrap();
+        let xattr = |args: &[&str]| std::process::Command::new("/usr/bin/xattr").args(args).arg(&file).output().unwrap();
+        assert!(xattr(&["-w", "dev.edit2.test", "kept"]).status.success());
+        write_atomic(&file, b"new").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert_eq!(String::from_utf8_lossy(&xattr(&["-p", "dev.edit2.test"]).stdout).trim(), "kept");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

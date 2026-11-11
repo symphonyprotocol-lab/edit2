@@ -23,6 +23,8 @@ export interface FileData {
   bom: boolean;
   /** The encoding was detected from little evidence. */
   guessed: boolean;
+  /** Some bytes did not decode (shown as U+FFFD): the text must not be saved over the file. */
+  lossy: boolean;
   size: number;
 }
 
@@ -88,7 +90,7 @@ async function devRead(path: string): Promise<FileData> {
   const res = await fetch(`/@fs${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   const content = await res.text();
-  return { path, content, mtime: 0, encoding: "UTF-8", bom: false, guessed: false, size: content.length };
+  return { path, content, mtime: 0, encoding: "UTF-8", bom: false, guessed: false, lossy: false, size: content.length };
 }
 
 /** Dev only, in a plain browser: whole binary files fetched through the vite server, by path. */
@@ -153,8 +155,9 @@ export const host = {
   setFormatMenu: (format: boolean, minify: boolean): Promise<void> =>
     inTauri ? invoke("set_format_menu", { format, minify }) : Promise.resolve(),
 
-  servePreview: (token: string, path: string | null, html: string): Promise<void> =>
-    inTauri ? invoke("serve_preview", { token, path, html }) : Promise.resolve(),
+  /** Publish a page for the script preview; resolves to its URL path under `previewOrigin`. */
+  servePreview: (token: string, path: string | null, html: string): Promise<string> =>
+    inTauri ? invoke<string>("serve_preview", { token, path, html }) : Promise.resolve(""),
 
   /** Origin of the backend's `preview:` protocol (Windows maps custom schemes to http). */
   previewOrigin: /Windows/i.test(navigator.userAgent) ? "http://preview.localhost" : "preview://localhost",

@@ -6,7 +6,7 @@ export const xml: FormatPlugin = {
   label: "XML",
   extensions: ["xml", "svg", "plist", "xsd", "xsl", "xslt", "rss", "atom"],
   language: () => import("@codemirror/lang-xml").then((m) => m.xml()),
-  preview: () => import("./preview").then((m) => m.xmlPreview),
+  preview: () => import("./preview").then((m) => m.xmlPreview()),
   formatter: () => import("./format").then((m) => m.xmlFormatter),
   canFormat: true,
   canMinify: true,

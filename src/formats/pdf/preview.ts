@@ -138,133 +138,137 @@ interface Shown {
   ctx: PreviewContext;
   stop: AbortController;
 }
-let shown: Shown | null = null;
 
-function teardown() {
-  if (!shown) return;
-  shown.stop.abort();
-  shown.viewer.setDocument(null as never);
-  shown.stage.remove();
-  shown = null;
-}
+/** A renderer of its own for each column: what it shows is kept per instance. */
+export function pdfPreview(): PreviewRenderer {
+  let shown: Shown | null = null;
 
-function pushStatus() {
-  if (!shown) return;
-  const v = shown.viewer;
-  if (!v.pagesCount) return;
-  shown.ctx.setStatus(`第 ${v.currentPageNumber} / ${v.pagesCount} 页`, `${Math.round(v.currentScale * 100)}%`);
-}
+  function teardown() {
+    if (!shown) return;
+    shown.stop.abort();
+    shown.viewer.setDocument(null as never);
+    shown.stage.remove();
+    shown = null;
+  }
 
-async function render(_source: string, ctx: PreviewContext) {
-  const file = ctx.file;
-  const path = ctx.path ?? "";
-  if (!file) return { error: { message: "没有可显示的 PDF 文件" } };
-  // Already showing this version (a theme change, a repeated render).
-  if (shown && shown.path === path && shown.version === file.version && shown.stage.isConnected) {
-    pushStatus();
+  function pushStatus() {
+    if (!shown) return;
+    const v = shown.viewer;
+    if (!v.pagesCount) return;
+    shown.ctx.setStatus(`第 ${v.currentPageNumber} / ${v.pagesCount} 页`, `${Math.round(v.currentScale * 100)}%`);
+  }
+
+  async function render(_source: string, ctx: PreviewContext) {
+    const file = ctx.file;
+    const path = ctx.path ?? "";
+    if (!file) return { error: { message: "没有可显示的 PDF 文件" } };
+    // Already showing this version (a theme change, a repeated render).
+    if (shown && shown.path === path && shown.version === file.version && shown.stage.isConnected) {
+      pushStatus();
+      return {};
+    }
+
+    if (!shown) ctx.setStatus("正在打开…", "");
+    let doc: PDFDocumentProxy;
+    let lib: Awaited<typeof viewerLib>;
+    try {
+      [doc, lib] = await Promise.all([load(path, file).doc, viewerLib]);
+    } catch (err) {
+      if (ctx.isCurrent() && !shown) ctx.setStatus("", "");
+      return ctx.isCurrent() ? { error: { message: describe(err) } } : {};
+    }
+    if (!ctx.isCurrent()) return {};
+
+    // A reload keeps the old pages on screen until the new version is ready.
+    const hadFocus = !!shown?.stage.contains(document.activeElement);
+    teardown();
+
+    const stage = mountStage(ctx, "pdf-stage", hadFocus);
+    const pages = document.createElement("div");
+    pages.className = "pdfViewer";
+    stage.append(pages);
+
+    const stop = new AbortController();
+    const { signal } = stop;
+    const bus = new lib.EventBus();
+    const links = new lib.PDFLinkService({
+      eventBus: bus,
+      externalLinkTarget: lib.LinkTarget.BLANK,
+      externalLinkRel: "noopener noreferrer nofollow",
+    });
+    const options: ConstructorParameters<typeof lib.PDFViewer>[0] & { abortSignal: AbortSignal } = {
+      container: stage,
+      viewer: pages,
+      eventBus: bus,
+      linkService: links,
+      // Annotations and form fields drawn as they look, none of them editable.
+      annotationMode: pdfjs.AnnotationMode.ENABLE,
+      // Stops its scroll and resize listeners (not in the published types).
+      abortSignal: signal,
+    };
+    const viewer = new lib.PDFViewer(options);
+    links.setViewer(viewer);
+    const current: Shown = { path, version: file.version, stage, viewer, ctx, stop };
+    shown = current;
+
+    bus.on("pagesinit", () => {
+      const place = places.get(path);
+      viewer.currentScaleValue = place?.scale ?? FIT;
+      if (place) {
+        viewer.scrollPageIntoView({
+          pageNumber: Math.min(place.page, viewer.pagesCount),
+          destArray: [null, { name: "XYZ" }, place.left, place.top, null],
+          allowNegativeOffset: true,
+        });
+      }
+      pushStatus();
+    });
+    bus.on("pagechanging", pushStatus);
+    bus.on("scalechanging", pushStatus);
+    bus.on("updateviewarea", ({ location }: { location?: { pageNumber: number; left: number; top: number } }) => {
+      if (!location || shown !== current) return;
+      places.set(path, { scale: String(viewer.currentScaleValue), page: location.pageNumber, left: location.left, top: location.top });
+    });
+
+    // Fitted to the width: keep fitting as the pane is resized (or first gets a size).
+    let width = -1;
+    let frame = 0;
+    const fit = new ResizeObserver(([entry]) => {
+      const w = Math.round(entry.contentRect.width);
+      if (w === width) return;
+      width = w;
+      if (!w || viewer.currentScaleValue !== FIT) return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => shown === current && (viewer.currentScaleValue = FIT));
+    });
+    fit.observe(stage);
+    signal.addEventListener("abort", () => {
+      fit.disconnect();
+      cancelAnimationFrame(frame);
+    });
+
+    // Pinch (or ⌘/Ctrl + wheel) zooms around the pointer.
+    onPinchZoom(stage, signal, (factor, x, y) =>
+      viewer.updateScale({ scaleFactor: factor, origin: [x, y], drawingDelay: 250 }),
+    );
+
+    viewer.setDocument(doc);
+    links.setDocument(doc);
     return {};
   }
 
-  if (!shown) ctx.setStatus("正在打开…", "");
-  let doc: PDFDocumentProxy;
-  let lib: Awaited<typeof viewerLib>;
-  try {
-    [doc, lib] = await Promise.all([load(path, file).doc, viewerLib]);
-  } catch (err) {
-    if (ctx.isCurrent() && !shown) ctx.setStatus("", "");
-    return ctx.isCurrent() ? { error: { message: describe(err) } } : {};
+  function zoom(step: 1 | -1 | 0): boolean {
+    if (!shown?.viewer.pagesCount) return false;
+    const v = shown.viewer;
+    if (step === 0) v.currentScaleValue = FIT;
+    else if (step > 0) v.increaseScale();
+    else v.decreaseScale();
+    return true;
   }
-  if (!ctx.isCurrent()) return {};
 
-  // A reload keeps the old pages on screen until the new version is ready.
-  const hadFocus = !!shown?.stage.contains(document.activeElement);
-  teardown();
-
-  const stage = mountStage(ctx, "pdf-stage", hadFocus);
-  const pages = document.createElement("div");
-  pages.className = "pdfViewer";
-  stage.append(pages);
-
-  const stop = new AbortController();
-  const { signal } = stop;
-  const bus = new lib.EventBus();
-  const links = new lib.PDFLinkService({
-    eventBus: bus,
-    externalLinkTarget: lib.LinkTarget.BLANK,
-    externalLinkRel: "noopener noreferrer nofollow",
-  });
-  const options: ConstructorParameters<typeof lib.PDFViewer>[0] & { abortSignal: AbortSignal } = {
-    container: stage,
-    viewer: pages,
-    eventBus: bus,
-    linkService: links,
-    // Annotations and form fields drawn as they look, none of them editable.
-    annotationMode: pdfjs.AnnotationMode.ENABLE,
-    // Stops its scroll and resize listeners (not in the published types).
-    abortSignal: signal,
+  return {
+    render,
+    zoom,
+    reset: teardown,
   };
-  const viewer = new lib.PDFViewer(options);
-  links.setViewer(viewer);
-  const current: Shown = { path, version: file.version, stage, viewer, ctx, stop };
-  shown = current;
-
-  bus.on("pagesinit", () => {
-    const place = places.get(path);
-    viewer.currentScaleValue = place?.scale ?? FIT;
-    if (place) {
-      viewer.scrollPageIntoView({
-        pageNumber: Math.min(place.page, viewer.pagesCount),
-        destArray: [null, { name: "XYZ" }, place.left, place.top, null],
-        allowNegativeOffset: true,
-      });
-    }
-    pushStatus();
-  });
-  bus.on("pagechanging", pushStatus);
-  bus.on("scalechanging", pushStatus);
-  bus.on("updateviewarea", ({ location }: { location?: { pageNumber: number; left: number; top: number } }) => {
-    if (!location || shown !== current) return;
-    places.set(path, { scale: String(viewer.currentScaleValue), page: location.pageNumber, left: location.left, top: location.top });
-  });
-
-  // Fitted to the width: keep fitting as the pane is resized (or first gets a size).
-  let width = -1;
-  let frame = 0;
-  const fit = new ResizeObserver(([entry]) => {
-    const w = Math.round(entry.contentRect.width);
-    if (w === width) return;
-    width = w;
-    if (!w || viewer.currentScaleValue !== FIT) return;
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => shown === current && (viewer.currentScaleValue = FIT));
-  });
-  fit.observe(stage);
-  signal.addEventListener("abort", () => {
-    fit.disconnect();
-    cancelAnimationFrame(frame);
-  });
-
-  // Pinch (or ⌘/Ctrl + wheel) zooms around the pointer.
-  onPinchZoom(stage, signal, (factor, x, y) =>
-    viewer.updateScale({ scaleFactor: factor, origin: [x, y], drawingDelay: 250 }),
-  );
-
-  viewer.setDocument(doc);
-  links.setDocument(doc);
-  return {};
 }
-
-function zoom(step: 1 | -1 | 0): boolean {
-  if (!shown?.viewer.pagesCount) return false;
-  const v = shown.viewer;
-  if (step === 0) v.currentScaleValue = FIT;
-  else if (step > 0) v.increaseScale();
-  else v.decreaseScale();
-  return true;
-}
-
-export const pdfPreview: PreviewRenderer = {
-  render,
-  zoom,
-  reset: teardown,
-};

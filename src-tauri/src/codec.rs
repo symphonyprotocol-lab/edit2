@@ -13,6 +13,9 @@ pub struct Decoded {
     pub bom: bool,
     /// Detection had little evidence to go on.
     pub guessed: bool,
+    /// Some bytes were not valid in the encoding and became U+FFFD: writing
+    /// the text back would not reproduce the file.
+    pub lossy: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -34,24 +37,24 @@ pub fn decode_as(bytes: &[u8], label: &str) -> Option<Decoded> {
     let (bom_encoding, bom_len) = Encoding::for_bom(bytes).unwrap_or((encoding, 0));
     let bom = bom_len > 0 && bom_encoding == encoding;
     let body = if bom { &bytes[bom_len..] } else { bytes };
-    let (text, _) = encoding.decode_without_bom_handling(body);
-    Some(Decoded { text: text.into_owned(), encoding: encoding.name(), bom, guessed: false })
+    let (text, lossy) = encoding.decode_without_bom_handling(body);
+    Some(Decoded { text: text.into_owned(), encoding: encoding.name(), bom, guessed: false, lossy })
 }
 
-/// Detect the encoding and decode. Bytes the guessed encoding cannot decode
-/// become U+FFFD and the result is flagged as a guess, so the file still opens
-/// and the user can pick another encoding (writing U+FFFD back into a legacy
-/// encoding is refused, so nothing is lost silently).
+/// Detect the encoding and decode. Bytes the encoding cannot decode become
+/// U+FFFD and the result is flagged as lossy, so the file still opens and the
+/// user can pick another encoding; the frontend never writes a lossy text back
+/// over the file (UTF-8, UTF-16 and GB18030 would encode U+FFFD without complaint).
 pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
     if let Some((encoding, len)) = Encoding::for_bom(bytes) {
-        let (text, _) = encoding.decode_without_bom_handling(&bytes[len..]);
-        return Ok(Decoded { text: text.into_owned(), encoding: encoding.name(), bom: true, guessed: false });
+        let (text, lossy) = encoding.decode_without_bom_handling(&bytes[len..]);
+        return Ok(Decoded { text: text.into_owned(), encoding: encoding.name(), bom: true, guessed: false, lossy });
     }
     if let Ok(text) = std::str::from_utf8(bytes) {
         if looks_binary(bytes) {
             return Err(DecodeError::Binary);
         }
-        return Ok(Decoded { text: text.to_owned(), encoding: UTF_8.name(), bom: false, guessed: false });
+        return Ok(Decoded { text: text.to_owned(), encoding: UTF_8.name(), bom: false, guessed: false, lossy: false });
     }
     if looks_binary(bytes) {
         return Err(DecodeError::Binary);
@@ -66,6 +69,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
         encoding: encoding.name(),
         bom: false,
         guessed: malformed || evidence < EVIDENCE,
+        lossy: malformed,
     })
 }
 
@@ -145,6 +149,21 @@ mod tests {
         assert!(d.text.contains('\u{FFFD}'));
         // which is never written back into GBK silently.
         assert_eq!(encode(&d.text, d.encoding, false), Err(EncodeError::Unmappable));
+    }
+
+    #[test]
+    fn decoding_with_the_wrong_encoding_is_flagged_as_lossy() {
+        let bytes = gbk("名称,数量,备注\n苹果,3,红色的苹果很甜\n");
+        // GBK read as UTF-8: replacement characters, which UTF-8 would happily write back.
+        let d = decode_as(&bytes, "UTF-8").unwrap();
+        assert!(d.lossy && d.text.contains('\u{FFFD}'));
+        assert!(encode(&d.text, "UTF-8", false).is_ok());
+        // The right encoding, and clean files, are not lossy.
+        assert!(!decode_as(&bytes, "GBK").unwrap().lossy);
+        assert!(!decode(&bytes).unwrap().lossy);
+        assert!(!decode("héllo".as_bytes()).unwrap().lossy);
+        // A BOM does not vouch for what follows it.
+        assert!(decode(b"\xEF\xBB\xBFab\xFFc").unwrap().lossy);
     }
 
     #[test]

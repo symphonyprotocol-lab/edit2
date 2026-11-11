@@ -22,7 +22,10 @@ export interface FormatPlugin {
   language?: () => Extension | Promise<Extension>;
   /** Format-specific editor behaviour (key bindings and the like). */
   editorExtras?: Extension;
-  /** Preview renderer, loaded on first use. Without one the format is edit-only. */
+  /**
+   * A new preview renderer (each column showing this format has its own), its
+   * code loaded on first use. Without one the format is edit-only.
+   */
   preview?: () => Promise<PreviewRenderer>;
   /**
    * Status bar summary, e.g. "1,204 字" or "120 行 × 6 列". `reading` is true

@@ -8,7 +8,7 @@ export const markdown: FormatPlugin = {
   extensions: ["md", "markdown", "mdown", "mkd", "mdx"],
   language: markdownLanguageSupport,
   editorExtras: formatKeymap,
-  preview: () => import("./preview").then((m) => m.markdownPreview),
+  preview: () => import("./preview").then((m) => m.markdownPreview()),
   stats: wordStats,
   defaultMode: "split",
 };

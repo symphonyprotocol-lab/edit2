@@ -9,7 +9,7 @@ export const image: FormatPlugin = {
   id: "image",
   label: "图片",
   extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "icns", "avif", "tif", "tiff", "heic", "heif"],
-  preview: () => import("./preview").then((m) => m.imagePreview),
+  preview: () => import("./preview").then((m) => m.imagePreview()),
   stats: () => "",
   defaultMode: "read",
   binary: true,

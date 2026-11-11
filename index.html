@@ -59,26 +59,35 @@
           </div>
         </section>
 
-        <div class="pane editor-pane" id="editor"></div>
-        <div
-          class="split-divider"
-          id="split-divider"
-          role="separator"
-          aria-orientation="vertical"
-          aria-controls="editor"
-          aria-label="调整分栏宽度"
-          title="拖动调整宽度，双击恢复对半"
-          tabindex="0"
-        ></div>
-        <div class="pane preview-pane" id="preview-scroll">
-          <div class="preview-error" id="preview-error" role="alert" hidden></div>
-          <article class="preview" id="preview"></article>
-        </div>
-        <aside class="outline" id="outline" aria-label="大纲">
-          <div class="ol-head">大纲</div>
-          <nav class="ol-list" id="outline-list"></nav>
-        </aside>
-        <button type="button" class="outline-toggle" id="outline-toggle" aria-controls="outline"></button>
+        <!-- One column of documents: the window has one, or two side by side (main.ts). -->
+        <template id="column-tpl">
+          <div class="column" data-mode="write">
+            <div class="col-tabs">
+              <div class="tab-list" role="tablist"></div>
+              <button type="button" class="tab-new" title="新建标签页" aria-label="新建标签页"></button>
+            </div>
+            <div class="col-body">
+              <div class="pane editor-pane"></div>
+              <div
+                class="split-divider"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="调整编辑与预览的宽度"
+                title="拖动调整宽度，双击恢复对半"
+                tabindex="0"
+              ></div>
+              <div class="pane preview-pane" tabindex="-1">
+                <div class="preview-error" role="alert" hidden></div>
+                <article class="preview"></article>
+              </div>
+              <aside class="outline" aria-label="大纲">
+                <div class="ol-head">大纲</div>
+                <nav class="ol-list"></nav>
+              </aside>
+              <button type="button" class="outline-toggle"></button>
+            </div>
+          </div>
+        </template>
         </div>
       </main>
 

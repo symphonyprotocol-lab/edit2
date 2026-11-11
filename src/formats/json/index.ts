@@ -6,7 +6,7 @@ export const json: FormatPlugin = {
   label: "JSON",
   extensions: ["json", "jsonc", "json5", "geojson", "webmanifest"],
   language: () => import("@codemirror/lang-json").then((m) => m.json()),
-  preview: () => import("./preview").then((m) => m.jsonPreview),
+  preview: () => import("./preview").then((m) => m.jsonPreview()),
   formatter: () => import("./format").then((m) => m.jsonFormatter),
   canFormat: true,
   canMinify: true,

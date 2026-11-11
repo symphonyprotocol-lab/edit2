@@ -6,7 +6,7 @@ export const csv: FormatPlugin = {
   label: "CSV",
   extensions: ["csv", "tsv", "tab"],
   language: () => import("./language").then((m) => m.csvLanguage),
-  preview: () => import("./preview").then((m) => m.csvPreview),
+  preview: () => import("./preview").then((m) => m.csvPreview()),
   stats(text) {
     const { rows, columns } = parseCsv(text);
     return `${rows.length.toLocaleString()} 行 × ${columns} 列`;

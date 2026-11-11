@@ -12,7 +12,7 @@ export const toml: FormatPlugin = {
     ]);
     return StreamLanguage.define(toml);
   },
-  preview: () => import("./preview").then((m) => m.tomlPreview),
+  preview: () => import("./preview").then((m) => m.tomlPreview()),
   formatter: () => import("./format").then((m) => m.tomlFormatter),
   canFormat: true,
   stats: validityStats(() => import("./parse").then((m) => m.parseToml)),

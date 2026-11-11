@@ -19,6 +19,8 @@ export interface TabBarHandlers {
   close(id: number): void;
   move(id: number, toIndex: number): void;
   create(): void;
+  /** Right-click on a tab, at these window coordinates. */
+  menu(id: number, x: number, y: number): void;
 }
 
 const DRAG_THRESHOLD = 4;
@@ -41,6 +43,12 @@ export class TabBar {
     list.addEventListener("auxclick", (e) => {
       const tab = (e.target as HTMLElement).closest<HTMLElement>(".tab");
       if (tab && e.button === 1) h.close(Number(tab.dataset.id));
+    });
+    list.addEventListener("contextmenu", (e) => {
+      const tab = (e.target as HTMLElement).closest<HTMLElement>(".tab");
+      if (!tab) return;
+      e.preventDefault();
+      h.menu(Number(tab.dataset.id), e.clientX, e.clientY);
     });
   }
 

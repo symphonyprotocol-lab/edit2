@@ -5,7 +5,7 @@
   margin: 0;
   padding: 0;
 }
-#app[data-mode] .preview:has(> .viewer-stage) { padding: 0; }
+.column[data-mode] .preview:has(> .viewer-stage) { padding: 0; }
 
 .viewer-stage {
   --desk: #e8e6e1;

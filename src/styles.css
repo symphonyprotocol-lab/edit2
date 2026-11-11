@@ -287,6 +287,49 @@ button { font: inherit; color: inherit; }
   position: relative;
 }
 
+/* A column of documents: its own tab strip (shown only when there are two
+   columns) over its editor and preview. main.ts sets the view on the column
+   (data-mode, .narrow, the outline classes) and mirrors the focused column's
+   on #app for the title bar. */
+.column {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+#app.is-empty .column { display: none; }
+.col-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+.col-tabs {
+  display: none;
+  flex: none;
+  height: 36px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Two columns: the divider between them sets the left one's share (--cols). */
+#app.is-split .titlebar { border-bottom-color: var(--line); }
+#app.is-split .col-tabs { display: flex; }
+#app.is-split .column { flex: var(--cols, 0.5) 1 0; min-width: 240px; }
+#app.is-split .col-divider ~ .column { flex: calc(1 - var(--cols, 0.5)) 1 0; }
+#app.is-split .col-tabs .tab { width: 160px; }
+/* The column the title bar, status bar and shortcuts act on has the stronger tab. */
+#app.is-split .column:not(.focused) .tab[aria-selected="true"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
 .pane {
   flex: 1 1 0;
   min-width: 0;
@@ -294,14 +337,13 @@ button { font: inherit; color: inherit; }
 }
 .pane + .pane { border-left: 1px solid var(--line); }
 
-#app[data-mode="write"] .preview-pane { display: none; }
-#app[data-mode="read"] .editor-pane { display: none; }
-#app[data-mode="read"] .preview-pane { border-left: 0; }
-#app.is-empty .pane { display: none; }
+.column[data-mode="write"] .preview-pane { display: none; }
+.column[data-mode="read"] .editor-pane { display: none; }
+.column[data-mode="read"] .preview-pane { border-left: 0; }
 
 /* Split view: the divider sets the editor's share (--split); each pane keeps 200px (SPLIT_MIN_PX). */
-#app[data-mode="split"] .editor-pane { flex: var(--split, 0.5) 1 0; min-width: 200px; }
-#app[data-mode="split"] .preview-pane { flex: calc(1 - var(--split, 0.5)) 1 0; min-width: 200px; }
+.column[data-mode="split"] .editor-pane { flex: var(--split, 0.5) 1 0; min-width: 200px; }
+.column[data-mode="split"] .preview-pane { flex: calc(1 - var(--split, 0.5)) 1 0; min-width: 200px; }
 
 .split-divider {
   display: none;
@@ -313,7 +355,7 @@ button { font: inherit; color: inherit; }
   touch-action: none;
   outline: none;
 }
-#app[data-mode="split"]:not(.is-empty) .split-divider { display: block; }
+.column[data-mode="split"] .split-divider, .col-divider { display: block; }
 /* A wider, invisible grab area. */
 .split-divider::before { content: ""; position: absolute; inset: 0 -3px; }
 /* Accent line shown on hover, focus and while dragging. */
@@ -338,17 +380,17 @@ button { font: inherit; color: inherit; }
 #app.is-resizing iframe { pointer-events: none; }
 
 /* Too narrow for two panes (judged by the area beside the sidebar in main.ts). */
-#app.narrow[data-mode="split"] .preview-pane { display: none; }
-#app.narrow[data-mode="split"] .editor-pane { flex: 1 1 0; }
-#app.narrow[data-mode="split"]:not(.is-empty) .split-divider { display: none; }
+.column.narrow[data-mode="split"] .preview-pane { display: none; }
+.column.narrow[data-mode="split"] .editor-pane { flex: 1 1 0; }
+.column.narrow[data-mode="split"] .split-divider { display: none; }
 #app.narrow[data-mode="split"]:not(.has-folder) .titlebar { border-bottom-color: transparent; }
 /* The sidebar draws its own line under the title bar. */
 #app.has-folder:not(.sidebar-hidden) .titlebar { border-bottom-color: var(--line); }
 
-/* ---------- outline (Markdown, Read view) ---------- */
+/* ---------- outline (Markdown, every view) ---------- */
 
-/* main.ts sets .has-outline (Read view, Markdown with headings), .outline-on (the
-   remembered choice) and .outline-cramped (panes narrower than OUTLINE_ROOM). */
+/* main.ts sets on the column .has-outline (Markdown with headings),
+   .outline-on (the remembered choice) and .outline-cramped (narrower than OUTLINE_ROOM). */
 .outline {
   display: none;
   flex: 0 0 220px;
@@ -359,7 +401,7 @@ button { font: inherit; color: inherit; }
   user-select: none;
   -webkit-user-select: none;
 }
-#app.has-outline.outline-on:not(.outline-cramped) .outline { display: flex; }
+.column.has-outline.outline-on:not(.outline-cramped) .outline { display: flex; }
 .ol-head {
   flex: none;
   height: 38px;
@@ -422,7 +464,7 @@ button { font: inherit; color: inherit; }
   place-items: center;
   cursor: default;
 }
-#app.has-outline:not(.outline-cramped) .outline-toggle { display: grid; }
+.column.has-outline:not(.outline-cramped) .outline-toggle { display: grid; }
 .outline-toggle::before {
   content: "";
   width: 14px; height: 11px;
@@ -631,8 +673,8 @@ button { font: inherit; color: inherit; }
 .editor-pane { overflow: hidden; }
 .editor-pane .cm-editor { height: 100%; outline: none; }
 .editor-pane .cm-scroller { scroll-padding-block: 40px; }
-#editor .cm-content { padding: 28px 40px 40vh; }
-#app[data-mode="split"] #editor .cm-content { padding-left: 32px; padding-right: 32px; }
+.col-body .editor-pane .cm-content { padding: 28px 40px 40vh; }
+.column[data-mode="split"] .editor-pane .cm-content { padding-left: 32px; padding-right: 32px; }
 
 /* ---------- preview ---------- */
 
@@ -648,7 +690,7 @@ button { font: inherit; color: inherit; }
   line-height: 1.75;
   overflow-wrap: break-word;
 }
-#app[data-mode="split"] .preview { padding-left: 32px; padding-right: 32px; }
+.column[data-mode="split"] .preview { padding-left: 32px; padding-right: 32px; }
 .fmt-markdown > :first-child { margin-top: 0; }
 .fmt-markdown h1, .fmt-markdown h2, .fmt-markdown h3, .fmt-markdown h4, .fmt-markdown h5, .fmt-markdown h6 { line-height: 1.3; margin: 1.6em 0 0.6em; letter-spacing: -0.01em; }
 .fmt-markdown h1 { font-size: 1.75em; }
@@ -859,7 +901,7 @@ button { font: inherit; color: inherit; }
 /* ---------- HTML ---------- */
 
 .fmt-html { max-width: none; padding: 0 0 24px; }
-#app[data-mode="split"] .fmt-html { padding: 0 0 24px; }
+.column[data-mode="split"] .fmt-html { padding: 0 0 24px; }
 .html-toolbar {
   justify-content: space-between;
   align-items: center;

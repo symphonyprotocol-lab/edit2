@@ -16,7 +16,7 @@ export const pdf: FormatPlugin = {
   extensions: ["pdf"],
   preview: () =>
     supported()
-      ? import("./preview").then((m) => m.pdfPreview)
+      ? import("./preview").then((m) => m.pdfPreview())
       : Promise.reject(new Error("查看 PDF 需要 macOS 13 或更高版本，并装有 Safari 18 或更高版本")),
   stats: () => "",
   defaultMode: "read",
