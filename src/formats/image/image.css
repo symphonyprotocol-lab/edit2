@@ -1,0 +1,28 @@
+/* Image viewer, on the shared viewer stage. */
+.image-stage {
+  display: flex;
+  padding: 16px;
+  cursor: default;
+}
+.image-stage.pannable { cursor: grab; }
+.image-stage.panning { cursor: grabbing; }
+/* Auto margins centre the picture while it is smaller than the stage and,
+   unlike centring with flex alignment, leave all of it reachable when larger. */
+.image-box { margin: auto; flex: none; }
+.image-box img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-drag: none;
+  /* Checkerboard behind transparent pixels, in both themes. */
+  --check-a: #ffffff;
+  --check-b: #e3e1dc;
+  background: repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 16px 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+@media (prefers-color-scheme: dark) {
+  .image-box img { --check-a: #2a2826; --check-b: #353330; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); }
+}
+/* Zoomed far in, show the pixels rather than a blur. */
+.image-box.pixels img { image-rendering: pixelated; }

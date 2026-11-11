@@ -1,6 +1,6 @@
 /**
- * PDF viewer: pdf.js's PDFViewer in a scroller of its own over the preview
- * pane. Pages are laid out at once but only those in view are rendered;
+ * PDF viewer: pdf.js's PDFViewer on the shared viewer stage (a scroller of
+ * its own over the preview pane). Pages are laid out at once but only those in view are rendered;
  * large files are read from disk in ranges as pages need them. Each page has
  * a text layer (selectable, copyable) and its links: internal ones scroll
  * here, the rest go through `ctx.openLink` like links in other previews.
@@ -10,6 +10,7 @@
  */
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./pdf.css";
+import { mountStage, onPinchZoom } from "../shared/viewer";
 import * as pdfjs from "pdfjs-dist";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -176,18 +177,13 @@ async function render(_source: string, ctx: PreviewContext) {
   if (!ctx.isCurrent()) return {};
 
   // A reload keeps the old pages on screen until the new version is ready.
-  const pane = ctx.container.parentElement;
   const hadFocus = !!shown?.stage.contains(document.activeElement);
   teardown();
 
-  const stage = document.createElement("div");
-  stage.className = "pdf-stage";
-  stage.tabIndex = -1;
-  stage.dataset.previewFocus = "";
+  const stage = mountStage(ctx, "pdf-stage", hadFocus);
   const pages = document.createElement("div");
   pages.className = "pdfViewer";
   stage.append(pages);
-  ctx.container.replaceChildren(stage);
 
   const stop = new AbortController();
   const { signal } = stop;
@@ -249,23 +245,12 @@ async function render(_source: string, ctx: PreviewContext) {
   });
 
   // Pinch (or ⌘/Ctrl + wheel) zooms around the pointer.
-  stage.addEventListener(
-    "wheel",
-    (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      const factor = Math.exp(-Math.max(-50, Math.min(50, e.deltaY)) / 100);
-      viewer.updateScale({ scaleFactor: factor, origin: [e.clientX, e.clientY], drawingDelay: 250 });
-    },
-    { passive: false, signal },
+  onPinchZoom(stage, signal, (factor, x, y) =>
+    viewer.updateScale({ scaleFactor: factor, origin: [x, y], drawingDelay: 250 }),
   );
 
   viewer.setDocument(doc);
   links.setDocument(doc);
-
-  // Keyboard scrolling goes to this scroller, not the pane under it.
-  const active = document.activeElement;
-  if (hadFocus || !active || active === document.body || active === pane) stage.focus({ preventScroll: true });
   return {};
 }
 

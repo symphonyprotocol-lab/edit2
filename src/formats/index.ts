@@ -13,6 +13,7 @@ import { csv } from "./csv";
 import { html } from "./html";
 import { codeFormats } from "./code";
 import { pdf } from "./pdf";
+import { image } from "./image";
 
 register(markdown, { untitled: true });
 register(plainText, { fallback: true });
@@ -24,6 +25,7 @@ register(csv);
 register(html);
 for (const code of codeFormats) register(code);
 register(pdf);
+register(image);
 
 export * from "./registry";
 export * from "./types";

@@ -317,7 +317,8 @@ export const host = {
 
   reveal: (path: string) => (inTauri ? revealItemInDir(path) : Promise.resolve()),
 
-  assetUrl: (path: string) => (inTauri ? convertFileSrc(path) : path),
+  /** URL a page can load a local file from (in a plain browser, through the vite server). */
+  assetUrl: (path: string) => (inTauri ? convertFileSrc(path) : import.meta.env.DEV ? `/@fs${path}` : path),
 
   async listen<T>(event: string, cb: (payload: T) => void): Promise<UnlistenFn> {
     if (!inTauri) return () => {};

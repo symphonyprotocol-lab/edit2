@@ -1,54 +1,96 @@
-//! Binary files shown by a viewer (PDF). They never go through the text codec:
-//! the frontend asks what the file is, then reads byte ranges of it as the
-//! viewer needs them, so a large document opens without being read whole.
-//! Nothing here writes.
+//! Binary files shown by a viewer (PDF, images). They never go through the
+//! text codec: the frontend asks what the file is, then either loads it
+//! through the asset protocol (images) or reads byte ranges of it as the
+//! viewer needs them (PDF), so a large document opens without being read
+//! whole. Nothing here writes.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-/// Extensions whose files may be read as bytes.
-const VIEWABLE: &[&str] = &["pdf"];
+/// What a viewable file is, by its extension.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Kind {
+    Pdf,
+    Image,
+}
+
+const PDF_EXTS: &[&str] = &["pdf"];
+
+/// Image extensions with a viewer. SVG is not here: it opens as XML.
+pub const IMAGE_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "icns", "avif", "tif", "tiff", "heic", "heif",
+];
 
 /// Largest range one call returns.
 pub const MAX_RANGE: u64 = 64 * 1024 * 1024;
 
-/// How far into the file the `%PDF-` header may start (as in other readers).
-const HEADER_WINDOW: usize = 1024;
+/// How much of the start of a file the sniffing looks at.
+const HEAD: usize = 1024 + 5;
 
-pub fn is_viewable(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| VIEWABLE.contains(&e.to_ascii_lowercase().as_str()))
-}
-
-/// Whether the start of a file looks like a PDF.
-pub fn looks_like_pdf(head: &[u8]) -> bool {
-    head.windows(5).take(HEADER_WINDOW).any(|w| w == b"%PDF-")
-}
-
-/// Check that `path` is a PDF this module may read.
-pub fn check(path: &Path) -> Result<(), String> {
-    if !is_viewable(path) {
-        return Err("只能以字节方式读取 PDF 文件".into());
+pub fn kind_of(path: &Path) -> Option<Kind> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    if PDF_EXTS.contains(&ext.as_str()) {
+        Some(Kind::Pdf)
+    } else if IMAGE_EXTS.contains(&ext.as_str()) {
+        Some(Kind::Image)
+    } else {
+        None
     }
-    let mut head = Vec::with_capacity(HEADER_WINDOW + 5);
+}
+
+/// Whether the start of a file looks like a PDF (the header may come after some junk, as in other readers).
+pub fn looks_like_pdf(head: &[u8]) -> bool {
+    head.windows(5).take(1024).any(|w| w == b"%PDF-")
+}
+
+/// Whether the start of a file looks like an image of any supported type.
+/// The extension is not required to match: web views go by content, and a
+/// `.jpg` that is really a PNG still shows.
+pub fn looks_like_image(head: &[u8]) -> bool {
+    let at = |i: usize, sig: &[u8]| head.get(i..i + sig.len()) == Some(sig);
+    at(0, b"\x89PNG\r\n\x1a\n")
+        || at(0, b"\xFF\xD8\xFF")
+        || at(0, b"GIF87a")
+        || at(0, b"GIF89a")
+        || at(0, b"BM")
+        || at(0, b"\0\0\x01\0") // ICO
+        || at(0, b"icns")
+        || (at(0, b"RIFF") && at(8, b"WEBP"))
+        || at(0, b"II*\0") // TIFF, little-endian
+        || at(0, b"MM\0*") // TIFF, big-endian
+        || (at(4, b"ftyp")
+            && [&b"avif"[..], b"avis", b"heic", b"heix", b"hevc", b"heim", b"heis", b"mif1", b"msf1"]
+                .iter()
+                .any(|brand| at(8, brand)))
+}
+
+fn head_of(path: &Path) -> Result<Vec<u8>, String> {
+    let mut head = Vec::with_capacity(HEAD);
     File::open(path)
         .map_err(|e| e.to_string())?
-        .take((HEADER_WINDOW + 5) as u64)
+        .take(HEAD as u64)
         .read_to_end(&mut head)
         .map_err(|e| e.to_string())?;
-    if looks_like_pdf(&head) {
-        Ok(())
-    } else {
-        Err("这不是 PDF 文件（缺少 %PDF 文件头）".into())
+    Ok(head)
+}
+
+/// Check that `path` is a file of a viewable kind, by extension and content.
+pub fn check(path: &Path) -> Result<Kind, String> {
+    let kind = kind_of(path).ok_or("只能以只读方式查看 PDF 和图片文件")?;
+    let head = head_of(path)?;
+    match kind {
+        Kind::Pdf if looks_like_pdf(&head) => Ok(kind),
+        Kind::Pdf => Err("这不是 PDF 文件（缺少 %PDF 文件头）".into()),
+        Kind::Image if looks_like_image(&head) => Ok(kind),
+        Kind::Image => Err("这不是可以识别的图片文件".into()),
     }
 }
 
 /// Up to `length` bytes from `offset`; shorter at the end of the file.
 pub fn read_range(path: &Path, offset: u64, length: u64) -> Result<Vec<u8>, String> {
-    if !is_viewable(path) {
-        return Err("只能以字节方式读取 PDF 文件".into());
+    if kind_of(path).is_none() {
+        return Err("只能以字节方式读取 PDF 和图片文件".into());
     }
     if length > MAX_RANGE {
         return Err(format!("一次最多读取 {MAX_RANGE} 字节"));
@@ -74,15 +116,17 @@ mod tests {
     }
 
     #[test]
-    fn only_pdfs_are_viewable() {
-        assert!(is_viewable(Path::new("/a/b.pdf")));
-        assert!(is_viewable(Path::new("/a/B.PDF")));
-        assert!(!is_viewable(Path::new("/a/b.png")));
-        assert!(!is_viewable(Path::new("/a/pdf")));
+    fn kinds_come_from_the_extension() {
+        assert_eq!(kind_of(Path::new("/a/b.pdf")), Some(Kind::Pdf));
+        assert_eq!(kind_of(Path::new("/a/B.PDF")), Some(Kind::Pdf));
+        assert_eq!(kind_of(Path::new("/a/b.JPG")), Some(Kind::Image));
+        assert_eq!(kind_of(Path::new("/a/b.icns")), Some(Kind::Image));
+        assert_eq!(kind_of(Path::new("/a/b.svg")), None);
+        assert_eq!(kind_of(Path::new("/a/pdf")), None);
     }
 
     #[test]
-    fn header_is_sniffed() {
+    fn pdf_header_is_sniffed() {
         assert!(looks_like_pdf(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3"));
         assert!(looks_like_pdf(b"\xEF\xBB\xBFjunk%PDF-1.4"));
         assert!(!looks_like_pdf(b"<html>%PD"));
@@ -90,10 +134,37 @@ mod tests {
     }
 
     #[test]
+    fn image_signatures_are_sniffed() {
+        for head in [
+            &b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"[..],
+            b"\xFF\xD8\xFF\xE0\0\x10JFIF",
+            b"GIF89a\x01\0",
+            b"BM6\0\0\0",
+            b"\0\0\x01\0\x01\0",
+            b"icns\0\0\x10\0",
+            b"RIFF\x24\0\0\0WEBPVP8 ",
+            b"II*\0\x08\0\0\0",
+            b"MM\0*\0\0\0\x08",
+            b"\0\0\0\x1cftypavif\0\0\0\0",
+            b"\0\0\0\x18ftypheic\0\0\0\0",
+        ] {
+            assert!(looks_like_image(head), "{head:?}");
+        }
+        assert!(!looks_like_image(b"%PDF-1.4"));
+        assert!(!looks_like_image(b"<svg xmlns"));
+        assert!(!looks_like_image(b"RIFF\0\0\0\0WAVE"));
+        assert!(!looks_like_image(b""));
+    }
+
+    #[test]
     fn check_refuses_other_files() {
-        assert!(check(&temp("ok.pdf", b"%PDF-1.4\n1 0 obj\n")).is_ok());
+        assert_eq!(check(&temp("ok.pdf", b"%PDF-1.4\n1 0 obj\n")), Ok(Kind::Pdf));
         assert!(check(&temp("fake.pdf", b"just text")).is_err());
         assert!(check(&temp("doc.txt", b"%PDF-1.4")).is_err());
+        assert_eq!(check(&temp("ok.png", b"\x89PNG\r\n\x1a\n\0\0")), Ok(Kind::Image));
+        // Named .jpg but a PNG inside: still an image.
+        assert_eq!(check(&temp("misnamed.jpg", b"\x89PNG\r\n\x1a\n\0\0")), Ok(Kind::Image));
+        assert!(check(&temp("fake.png", b"not an image")).is_err());
     }
 
     #[test]

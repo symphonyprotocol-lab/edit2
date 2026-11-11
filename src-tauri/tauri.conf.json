@@ -116,6 +116,13 @@
         "role": "Viewer",
         "rank": "Alternate",
         "mimeType": "application/pdf"
+      },
+      {
+        "ext": ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "icns", "avif", "tif", "tiff", "heic", "heif"],
+        "name": "Image",
+        "description": "图片",
+        "role": "Viewer",
+        "rank": "Alternate"
       }
     ]
   }

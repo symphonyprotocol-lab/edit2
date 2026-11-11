@@ -413,7 +413,7 @@ function refreshChrome() {
   saveEl.title = "";
   if (doc.format.binary) {
     saveEl.textContent = "只读";
-    saveEl.title = `${doc.format.label} 文件只能查看，edit2 不会写入它`;
+    saveEl.title = "这个文件只能查看，edit2 不会写入它";
   } else if (doc.readOnly) {
     saveEl.textContent = "只读 · 文件过大";
   } else if (doc.unmappable) {
@@ -1135,7 +1135,7 @@ function setMode(next: Mode) {
     return;
   }
   if (doc.format.binary && next !== "read") {
-    if (doc.started) toast(`${doc.format.label} 文件只能在阅读视图中查看`);
+    if (doc.started) toast("这个文件只能在阅读视图中查看");
     return;
   }
   const line = mode === "read" ? null : editorTopLine();
@@ -1227,7 +1227,7 @@ function formatMenu(): MenuEntry[] {
   const key = tab.path ?? tab.draft;
   const byExtension = formatFor(tab.path);
   const overridden = !!key && overrides()[key] !== undefined;
-  if (tab.format.binary) return [{ heading: `${tab.format.label} 文件只能查看，不能换成其他格式显示` }];
+  if (tab.format.binary) return [{ heading: `${tab.format.label}：只能查看，不能换成其他格式显示` }];
   const entries: MenuEntry[] = [{ heading: "显示为" }];
   const item = (format: FormatPlugin): MenuEntry => ({
     label: format.label,
@@ -1845,8 +1845,8 @@ function serial<T>(tab: Tab, job: () => Promise<T>): Promise<T> {
 /** Write the tab's current text to `target`; marks what was written as saved. */
 async function writeNow(tab: Tab, target: string) {
   // Last line of defence: a binary file's tab has no text worth writing over it.
-  if (tab.format.binary) throw new Error(`${tab.format.label} 文件是只读的`);
-  if (formatFor(target).binary) throw new Error(`不能把文本保存为 ${formatFor(target).label} 文件`);
+  if (tab.format.binary) throw new Error(`${basename(tab.path ?? target)} 是只读的`);
+  if (formatFor(target).binary) throw new Error(`不能把文本保存为${formatFor(target).label}：${basename(target)}`);
   const snapshot = textOf(tab);
   try {
     const written = await host.writeFile(target, snapshot.sliceString(0, snapshot.length, tab.eol), tab.encoding, tab.bom);
@@ -1943,7 +1943,7 @@ function suggestName(tab: Tab) {
 async function save(as = false): Promise<boolean> {
   const tab = doc;
   if (tab.format.binary) {
-    toast(`${tab.format.label} 文件只能查看，不能保存`);
+    toast("这个文件只能查看，不能保存");
     return false;
   }
   const before = tab.path ?? tab.draft ?? "";
@@ -1956,7 +1956,7 @@ async function save(as = false): Promise<boolean> {
     if (!target) return false;
     const kind = formatFor(target);
     if (kind.binary) {
-      await host.alert("无法保存", `edit2 不会把文本写成 ${kind.label} 文件：${basename(target)}`);
+      await host.alert("无法保存", `edit2 不会把文本写成${kind.label}：${basename(target)}`);
       return false;
     }
   }
@@ -2107,7 +2107,7 @@ const commands: Record<string, () => unknown> = {
   redo: () => mode !== "read" && redo(view),
   find: () => {
     if (!doc.started) return;
-    if (doc.format.binary) return toast(`${doc.format.label} 暂不支持查找`);
+    if (doc.format.binary) return toast(`${doc.format.label}暂不支持查找`);
     if (mode === "read") setMode("write");
     openSearchPanel(view);
   },

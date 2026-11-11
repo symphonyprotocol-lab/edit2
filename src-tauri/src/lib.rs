@@ -349,9 +349,10 @@ pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     result
 }
 
-/// Files a preview may load: images, and the styles and fonts of HTML pages.
+/// Files a preview may load: images (also those the image viewer shows), and the styles and fonts of HTML pages.
 const ASSET_EXTS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico", "css", "woff", "woff2", "ttf", "otf",
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico", "tif", "tiff", "heic", "heif", "css", "woff",
+    "woff2", "ttf", "otf",
 ];
 
 fn file_args(args: impl Iterator<Item = String>, cwd: Option<&Path>) -> Vec<String> {
@@ -576,8 +577,9 @@ struct BinaryFile {
     mtime: Option<u64>,
 }
 
-/// A PDF about to be shown: check that it is one, and say how big it is.
-/// Its bytes are then read in ranges with `read_bytes`; nothing writes to it.
+/// A PDF or image about to be shown: check that it is one, and say how big
+/// it is. A PDF's bytes are then read in ranges with `read_bytes`, an image
+/// loads through the asset protocol; nothing writes to either.
 #[tauri::command]
 fn open_binary(path: String) -> Result<BinaryFile, String> {
     let p = Path::new(&path);
@@ -593,7 +595,7 @@ fn open_binary(path: String) -> Result<BinaryFile, String> {
     })
 }
 
-/// Bytes `offset..offset + length` of a PDF, as a raw (not JSON) response.
+/// Bytes `offset..offset + length` of a viewable file, as a raw (not JSON) response.
 #[tauri::command]
 fn read_bytes(path: String, offset: u64, length: u64) -> Result<tauri::ipc::Response, String> {
     binary::read_range(Path::new(&path), offset, length).map(tauri::ipc::Response::new)

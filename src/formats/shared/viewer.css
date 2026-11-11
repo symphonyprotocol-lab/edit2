@@ -1,0 +1,20 @@
+/* Read-only viewers (PDF, images): their own scroller covers the preview pane,
+   on a "desk" a little darker than the page. */
+.preview:has(> .viewer-stage) {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+#app[data-mode] .preview:has(> .viewer-stage) { padding: 0; }
+
+.viewer-stage {
+  --desk: #e8e6e1;
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--desk);
+  outline: none;
+}
+@media (prefers-color-scheme: dark) {
+  .viewer-stage { --desk: #121110; }
+}

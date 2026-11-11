@@ -1,22 +1,3 @@
-/* PDF viewer (pdf.js). Its own scroller covers the preview pane; the pages
-   stay white in dark mode, on a darker desk. */
-.preview.fmt-pdf {
-  max-width: none;
-  margin: 0;
-  padding: 0;
-}
-#app[data-mode] .preview.fmt-pdf { padding: 0; }
-
-.pdf-stage {
-  --pdf-desk: #e8e6e1;
-  position: absolute;
-  inset: 0;
-  overflow: auto;
-  background: var(--pdf-desk);
-  outline: none;
-}
-@media (prefers-color-scheme: dark) {
-  .pdf-stage { --pdf-desk: #121110; }
-}
+/* PDF viewer (pdf.js), on the shared viewer stage. Pages stay white in dark mode. */
 .pdf-stage .pdfViewer { padding: 8px 0 24px; }
 .pdf-stage .textLayer ::selection { background: rgba(0, 92, 220, 0.3); }
