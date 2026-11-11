@@ -175,6 +175,9 @@ export const host = {
     return typeof picked === "string" ? picked : null;
   },
 
+  /** macOS only: one panel that picks a file or a folder (see mac_open.rs). */
+  pickFileOrFolder: (): Promise<string | null> => invoke<string | null>("pick_file_or_folder"),
+
   /** The native dialogs pick files or folders, not both: folders get their own. */
   async pickFolder(): Promise<string | null> {
     if (!inTauri) {

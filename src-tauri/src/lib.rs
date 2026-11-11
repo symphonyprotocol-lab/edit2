@@ -10,6 +10,8 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindo
 mod codec;
 mod fstree;
 #[cfg(target_os = "macos")]
+mod mac_open;
+#[cfg(target_os = "macos")]
 mod mac_quit;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -510,6 +512,19 @@ struct PathInfo {
     dir: bool,
 }
 
+/// Open… on macOS: one panel that picks a file or a folder. Elsewhere the
+/// native dialogs pick one kind only, and the frontend uses the dialog plugin.
+#[tauri::command]
+async fn pick_file_or_folder(app: AppHandle) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    return mac_open::pick(&app);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 /// Whether `path` exists and is a folder; None if it does not exist.
 #[tauri::command]
 fn stat_path(path: String) -> Option<PathInfo> {
@@ -692,6 +707,7 @@ pub fn run() {
             file_mtime,
             stat_path,
             list_dir,
+            pick_file_or_folder,
             open_in_new_window,
             focus_if_open,
             close_cancelled,

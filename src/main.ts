@@ -1317,15 +1317,8 @@ async function closeTab(tab = doc): Promise<boolean> {
   const i = tabs.indexOf(tab);
   if (i < 0) return true;
   tabs.splice(i, 1);
-  if (!tabs.length) {
-    // Last tab gone: the window goes with it (nothing is left to ask about).
-    if (host.window) {
-      await syncBackend(true);
-      await host.window.destroy();
-      return true;
-    }
-    tabs = [createTab("", false)];
-  }
+  // Last tab gone: the window stays and shows the start screen (⇧⌘W closes it).
+  if (!tabs.length) tabs = [createTab("", false)];
   if (tab === doc || !tabs.includes(doc)) {
     doc = tabs[Math.min(i, tabs.length - 1)];
     view.setState(doc.state);
@@ -1437,10 +1430,19 @@ function dialogFilters(first?: FormatPlugin): DialogFilter[] {
 }
 
 async function openViaDialog() {
-  // macOS merges filters into one allow-list (no "all files" choice), which
-  // would hide text files without a known extension: offer every file there.
-  const path = await host.pickFile(isMac ? [] : [...dialogFilters(), { name: "所有文件", extensions: ["*"] }]);
-  if (!path) return;
+  // macOS has one panel for files and folders. Elsewhere the dialog picks files
+  // only (Open Folder picks folders), with every format's extensions as filters.
+  if (isMac && inTauri) {
+    const path = await host.pickFileOrFolder();
+    if (!path) return;
+    const info = await host.statPath(path).catch(() => null);
+    return info?.dir ? openPickedFolder(info.path) : openPickedFile(path);
+  }
+  const path = await host.pickFile([...dialogFilters(), { name: "所有文件", extensions: ["*"] }]);
+  if (path) await openPickedFile(path);
+}
+
+async function openPickedFile(path: string) {
   // A window showing a folder keeps to it: other files get a window of their own.
   if (folder && inTauri) await host.openInNewWindow(path);
   else await openPath(path);
@@ -1502,7 +1504,10 @@ function closeFolder() {
 
 async function openFolderViaDialog() {
   const path = await host.pickFolder();
-  if (!path) return;
+  if (path) await openPickedFolder(path);
+}
+
+async function openPickedFolder(path: string) {
   // Each window keeps its folder: another one opens in a new window.
   if (folder && inTauri) await host.openInNewWindow(path);
   else await openFolder(path);
