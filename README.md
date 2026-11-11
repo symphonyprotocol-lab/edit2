@@ -34,7 +34,7 @@ Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edi
 
 ## Features
 
-- **Three views**: Write (editor only), Split (editor and live preview with synced scrolling) and Read (preview only), remembered per format. In Split, drag the divider to resize the two panes (double-click to reset it to half and half; arrow keys work when it has focus), and the width is kept across restarts. Below 760 px wide, Split falls back to the editor. Plain text has only Write.
+- **Three views**: Write (editor only), Split (editor and live preview with synced scrolling) and Read (preview only), remembered per format. In Split, drag the divider to resize the two panes (double-click to reset it to half and half; arrow keys work when it has focus), and each tab keeps its own width; new tabs start at half and half. Below 760 px wide, Split falls back to the editor. Plain text has only Write.
 - **Markdown editing**: dimmed markup characters, highlighting inside fenced code blocks, automatic list continuation, and formatting shortcuts (⌘B bold, ⌘I italic, ⌘E inline code, ⌘K link, ⇧⌘X strikethrough). Clicking a task box in the preview updates the source.
 - **Links**: external links open in the system browser; links to other files of a supported format open them in edit2, other files are shown in Finder.
 - **Tabs**: files from Finder "Open With" or the Dock icon, drag and drop, the command line (`edit2 file.json`), ⌘O or links in the preview open as tabs in the same window. A file that is already open just switches to its tab, and an opened file takes over an empty untitled tab instead of adding another. Each tab keeps its own cursor, scroll position and undo history. Tabs can be reordered by dragging and closed with middle-click.

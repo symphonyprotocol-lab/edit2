@@ -136,6 +136,8 @@ interface Tab {
   previewWanted: boolean;
   /** Size of the file on disk when it was read, in bytes. */
   size: number;
+  /** The editor's share of the split view; every new tab starts at half and half. */
+  split: number;
 }
 
 const AUTOSAVE_DELAY = 800;
@@ -244,6 +246,7 @@ function createTab(text = "", started = true, format = formatOf(null)): Tab {
     readOnly: false,
     previewWanted: false,
     size: 0,
+    split: 0.5,
   };
 }
 
@@ -808,16 +811,13 @@ previewScroll.addEventListener("scroll", syncEditorFromPreview, { passive: true 
 // ---------- split divider ----------
 
 /**
- * The editor's share of the split, as a fraction so it survives window
- * resizes. One ratio for the whole app (not per format): tabs share one
- * layout, and the divider jumping on every tab switch would be distracting.
+ * Each tab keeps its own divider position (`Tab.split`, a fraction so it
+ * survives window resizes); a new tab starts at half and half. It is not
+ * saved: after a restart every tab starts at half and half again.
  */
 const divider = $("split-divider");
 /** Matches the panes' min-width in split mode (styles.css). */
 const SPLIT_MIN_PX = 200;
-let splitRatio = 0.5;
-
-const validRatio = (v: unknown) => (typeof v === "number" && v > 0.05 && v < 0.95 ? v : 0.5);
 
 /** Width the two panes share, and where it starts. */
 function splitSpan() {
@@ -831,10 +831,16 @@ function clampRatio(r: number, width = splitSpan().width): number {
   return Math.min(1 - min, Math.max(min, r));
 }
 
+/** Lay the panes out at the active tab's ratio (on every layout change). */
+function layoutSplit() {
+  app.style.setProperty("--split", String(doc.split));
+  divider.setAttribute("aria-valuenow", String(Math.round(doc.split * 100)));
+}
+
+/** Move the active tab's divider. */
 function applySplit(r: number) {
-  splitRatio = r;
-  app.style.setProperty("--split", String(r));
-  divider.setAttribute("aria-valuenow", String(Math.round(r * 100)));
+  doc.split = r;
+  layoutSplit();
   if (mode !== "split") return;
   // Wrapping changes on both sides: re-measure, then line the preview up again.
   anchorsMeasured = false;
@@ -843,11 +849,6 @@ function applySplit(r: number) {
     syncSource = null;
     syncPreviewFromEditor();
   });
-}
-
-function setSplit(r: number) {
-  applySplit(r);
-  prefs.set("splitRatio", Math.round(r * 10_000) / 10_000);
 }
 
 divider.setAttribute("aria-valuemin", "0");
@@ -861,8 +862,7 @@ divider.addEventListener("pointerdown", (e) => {
   // The overlay class also keeps preview iframes from swallowing the pointer.
   app.classList.add("is-resizing");
   const { left, width } = splitSpan();
-  const start = splitRatio;
-  let next = start;
+  let next = doc.split;
   let frame = 0;
   const move = (ev: PointerEvent) => {
     next = clampRatio((ev.clientX - left - divider.offsetWidth / 2) / width, width);
@@ -876,7 +876,7 @@ divider.addEventListener("pointerdown", (e) => {
     if (divider.hasPointerCapture(e.pointerId)) divider.releasePointerCapture(e.pointerId);
     cancelAnimationFrame(frame);
     app.classList.remove("is-resizing");
-    if (next !== start) setSplit(next);
+    if (next !== doc.split) applySplit(next);
   };
   divider.addEventListener("pointermove", move);
   divider.addEventListener("pointerup", end);
@@ -884,14 +884,14 @@ divider.addEventListener("pointerdown", (e) => {
   divider.addEventListener("lostpointercapture", end);
 });
 
-divider.addEventListener("dblclick", () => setSplit(0.5));
+divider.addEventListener("dblclick", () => applySplit(0.5));
 
 divider.addEventListener("keydown", (e) => {
   const step = e.shiftKey ? 0.1 : 0.02;
   const target = (
     {
-      ArrowLeft: splitRatio - step,
-      ArrowRight: splitRatio + step,
+      ArrowLeft: doc.split - step,
+      ArrowRight: doc.split + step,
       Home: 0,
       End: 1,
       Enter: 0.5,
@@ -899,7 +899,7 @@ divider.addEventListener("keydown", (e) => {
   )[e.key];
   if (target === undefined) return;
   e.preventDefault();
-  setSplit(e.key === "Enter" ? 0.5 : clampRatio(target));
+  applySplit(e.key === "Enter" ? 0.5 : clampRatio(target));
 });
 
 // ---------- view modes & font size ----------
@@ -919,6 +919,7 @@ function applyMode(next: Mode) {
   if (!doc.format.preview) next = "write";
   mode = next;
   app.dataset.mode = next;
+  layoutSplit();
   anchorsMeasured = false;
   for (const b of document.querySelectorAll<HTMLButtonElement>(".seg button")) {
     b.setAttribute("aria-checked", String(b.dataset.mode === next));
@@ -1347,6 +1348,7 @@ async function openPath(path: string) {
       tab.missing = tab.dirty = tab.failed = false;
       tab.editorScroll = null;
       tab.previewTop = 0;
+      tab.split = 0.5;
       tab.format = format;
       tab.wrap = true;
       takeFileData(tab, data);
@@ -1736,7 +1738,6 @@ async function boot() {
   app.classList.add(isMac && inTauri ? "platform-mac" : "platform-other");
   await prefs.load();
   applyFont(prefs.get("fontSize", 15));
-  applySplit(validRatio(prefs.get("splitRatio", 0.5)));
   applyMode(preferredMode(doc.format));
   renderRecent();
   refreshChrome();
@@ -1750,7 +1751,6 @@ async function boot() {
       if (value === null) delete settings[key];
       else settings[key] = value;
       if (key === "recent") renderRecent();
-      if (key === "splitRatio") applySplit(validRatio(value));
     });
 
     await win.onCloseRequested(async (e) => {
