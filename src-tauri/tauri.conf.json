@@ -12,7 +12,7 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https: data: blob:; style-src 'self' 'unsafe-inline' asset: http://asset.localhost; font-src 'self' data: asset: http://asset.localhost; frame-src preview: http://preview.localhost; connect-src ipc: http://ipc.localhost",
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https: data: blob:; style-src 'self' 'unsafe-inline' asset: http://asset.localhost; font-src 'self' data: asset: http://asset.localhost; frame-src preview: http://preview.localhost; connect-src 'self' ipc: http://ipc.localhost",
       "assetProtocol": {
         "enable": true,
         "scope": []
@@ -107,6 +107,42 @@
         "name": "Source Code",
         "description": "源代码",
         "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["pdf"],
+        "name": "PDF Document",
+        "description": "PDF 文档",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "mimeType": "application/pdf"
+      },
+      {
+        "ext": ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "icns", "avif", "tif", "tiff", "heic", "heif"],
+        "name": "Image",
+        "description": "图片",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["docx", "doc"],
+        "name": "Word Document",
+        "description": "Word 文档",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["xlsx", "xlsm", "ods", "xls"],
+        "name": "Spreadsheet",
+        "description": "电子表格",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["pptx", "ppt"],
+        "name": "Presentation",
+        "description": "演示文稿",
+        "role": "Viewer",
         "rank": "Alternate"
       }
     ]

@@ -36,6 +36,12 @@ export interface FormatPlugin {
   canMinify?: boolean;
   /** View used the first time a file of this format is opened. */
   defaultMode: Mode;
+  /**
+   * A binary file shown by its preview only (PDF): read-only, Read view only,
+   * never decoded as text, never written. The preview gets the bytes through
+   * `PreviewContext.file`; `stats` is not used.
+   */
+  binary?: boolean;
 }
 
 export interface PreviewRenderer {
@@ -54,6 +60,8 @@ export interface PreviewRenderer {
   reset?(): void;
   /** The system switched between light and dark. */
   themeChanged?(): void;
+  /** ⌘= / ⌘- (step 1 / -1) and ⌘0 (step 0): true if the preview zoomed itself. */
+  zoom?(step: 1 | -1 | 0): boolean;
 }
 
 export interface RenderResult {
@@ -88,6 +96,23 @@ export interface PreviewContext {
   layoutChanged(): void;
   /** False once a newer render or another document has taken over. */
   isCurrent(): boolean;
+  /** Binary formats: the file on disk (`source` is empty for them). */
+  file?: BinaryFile;
+  /** Binary formats: what the status bar shows (e.g. the page), since there is no editor to count. */
+  setStatus(position: string, summary: string): void;
+}
+
+/** A binary file as a preview reads it: in byte ranges, never whole unless asked. */
+export interface BinaryFile {
+  size: number;
+  /** Changes whenever the file on disk does (a reload). */
+  version: string;
+  /** Up to `length` bytes from `offset`. */
+  read(offset: number, length: number): Promise<Uint8Array>;
+  /** The system's own rendering as self-contained HTML (macOS Quick Look, Office files), or null. */
+  systemPreview(): Promise<string | null>;
+  /** Open the file in the system's default app for it. */
+  openInApp(): void;
 }
 
 export interface FormatOptions {

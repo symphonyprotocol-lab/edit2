@@ -7,6 +7,7 @@ use std::time::UNIX_EPOCH;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
+mod binary;
 mod codec;
 mod fstree;
 #[cfg(target_os = "macos")]
@@ -17,6 +18,7 @@ mod mac_quit;
 mod menu;
 mod migrate;
 mod preview;
+mod quicklook;
 mod routing;
 mod settings;
 
@@ -348,9 +350,10 @@ pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     result
 }
 
-/// Files a preview may load: images, and the styles and fonts of HTML pages.
+/// Files a preview may load: images (also those the image viewer shows), and the styles and fonts of HTML pages.
 const ASSET_EXTS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico", "css", "woff", "woff2", "ttf", "otf",
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico", "tif", "tiff", "heic", "heif", "css", "woff",
+    "woff2", "ttf", "otf",
 ];
 
 fn file_args(args: impl Iterator<Item = String>, cwd: Option<&Path>) -> Vec<String> {
@@ -566,6 +569,62 @@ fn read_file(path: String, encoding: Option<String>, force: Option<bool>) -> Res
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BinaryFile {
+    /// Canonical path.
+    path: String,
+    size: u64,
+    mtime: Option<u64>,
+}
+
+/// A PDF or image about to be shown: check that it is one, and say how big
+/// it is. A PDF's bytes are then read in ranges with `read_bytes`, an image
+/// loads through the asset protocol; nothing writes to either.
+#[tauri::command]
+fn open_binary(path: String) -> Result<BinaryFile, String> {
+    let p = Path::new(&path);
+    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
+    if meta.is_dir() {
+        return Err("这是一个文件夹".into());
+    }
+    binary::check(p)?;
+    Ok(BinaryFile {
+        path: normalize(&path),
+        size: meta.len(),
+        mtime: mtime_of(p),
+    })
+}
+
+/// Bytes `offset..offset + length` of a viewable file, as a raw (not JSON) response.
+#[tauri::command]
+fn read_bytes(path: String, offset: u64, length: u64) -> Result<tauri::ipc::Response, String> {
+    binary::read_range(Path::new(&path), offset, length).map(tauri::ipc::Response::new)
+}
+
+/// A system rendering of an Office document as self-contained HTML (macOS
+/// Quick Look), or None where the system has none.
+#[tauri::command]
+async fn system_preview(path: String) -> Result<Option<String>, String> {
+    let p = PathBuf::from(&path);
+    if binary::kind_of(&p) != Some(binary::Kind::Office) {
+        return Err("只有 Office 文件有系统预览".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || quicklook::preview_html(&p))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Open a file the viewers show (PDF, image, Office) in the system's default app for it.
+#[tauri::command]
+fn open_in_default_app(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if binary::kind_of(Path::new(&path)).is_none() || !Path::new(&path).is_file() {
+        return Err("只能用其他程序打开 PDF、图片和 Office 文件".into());
+    }
+    app.opener().open_path(&path, None::<&str>).map_err(|e| e.to_string())
+}
+
 /// Write `content` in `encoding` (UTF-8 by default). Fails with `UNMAPPABLE`,
 /// writing nothing, if the encoding cannot represent every character.
 #[tauri::command]
@@ -696,6 +755,10 @@ pub fn run() {
             init_window,
             report_state,
             read_file,
+            open_binary,
+            read_bytes,
+            system_preview,
+            open_in_default_app,
             write_file,
             delete_draft,
             allow_assets,

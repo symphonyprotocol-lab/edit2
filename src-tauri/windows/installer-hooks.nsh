@@ -3,7 +3,7 @@
 ; On Windows a bundle file association makes edit2 the default app for the
 ; extension, so tauri.windows.conf.json only associates Markdown. Every other
 ; format is added to Explorer's "Open with" list instead, leaving .html, .svg,
-; .json and the rest with the browser or editor the user already has.
+; .json, .pdf, images, Office files and the rest with the browser or app the user already has.
 ; `npm run build` checks these extensions against the format plugins.
 
 !define EDIT2_PROGID "edit2.File"
@@ -118,6 +118,28 @@
   !insertmacro ${MACRO} "tex"
   !insertmacro ${MACRO} "sty"
   !insertmacro ${MACRO} "cls"
+  !insertmacro ${MACRO} "pdf"
+  !insertmacro ${MACRO} "png"
+  !insertmacro ${MACRO} "jpg"
+  !insertmacro ${MACRO} "jpeg"
+  !insertmacro ${MACRO} "gif"
+  !insertmacro ${MACRO} "webp"
+  !insertmacro ${MACRO} "bmp"
+  !insertmacro ${MACRO} "ico"
+  !insertmacro ${MACRO} "icns"
+  !insertmacro ${MACRO} "avif"
+  !insertmacro ${MACRO} "tif"
+  !insertmacro ${MACRO} "tiff"
+  !insertmacro ${MACRO} "heic"
+  !insertmacro ${MACRO} "heif"
+  !insertmacro ${MACRO} "docx"
+  !insertmacro ${MACRO} "doc"
+  !insertmacro ${MACRO} "xlsx"
+  !insertmacro ${MACRO} "xlsm"
+  !insertmacro ${MACRO} "ods"
+  !insertmacro ${MACRO} "xls"
+  !insertmacro ${MACRO} "pptx"
+  !insertmacro ${MACRO} "ppt"
 !macroend
 
 !macro EDIT2_ADD_OPEN_WITH EXT
