@@ -11,6 +11,7 @@ import { yaml } from "./yaml";
 import { toml } from "./toml";
 import { csv } from "./csv";
 import { html } from "./html";
+import { codeFormats } from "./code";
 
 register(markdown, { untitled: true });
 register(plainText, { fallback: true });
@@ -20,6 +21,7 @@ register(yaml);
 register(toml);
 register(csv);
 register(html);
+for (const code of codeFormats) register(code);
 
 export * from "./registry";
 export * from "./types";

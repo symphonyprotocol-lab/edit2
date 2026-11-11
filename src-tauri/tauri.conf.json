@@ -93,6 +93,13 @@
         "role": "Editor",
         "rank": "Alternate",
         "mimeType": "text/html"
+      },
+      {
+        "ext": ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx", "vue", "py", "pyw", "pyi", "rs", "go", "java", "kt", "kts", "scala", "sbt", "groovy", "gradle", "c", "h", "cpp", "cc", "cxx", "hpp", "hh", "hxx", "ino", "m", "mm", "cs", "csx", "swift", "dart", "rb", "rake", "gemspec", "php", "phtml", "pl", "pm", "lua", "r", "jl", "hs", "elm", "erl", "hrl", "clj", "cljs", "cljc", "edn", "ml", "mli", "fs", "fsi", "fsx", "sh", "bash", "zsh", "ksh", "ps1", "psm1", "psd1", "sql", "css", "scss", "sass", "less", "dockerfile", "mk", "mak", "cmake", "ini", "cfg", "conf", "properties", "proto", "diff", "patch", "tex", "sty", "cls"],
+        "name": "Source Code",
+        "description": "源代码",
+        "role": "Editor",
+        "rank": "Alternate"
       }
     ]
   }
