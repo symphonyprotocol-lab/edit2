@@ -9,6 +9,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 mod codec;
+mod fstree;
 #[cfg(target_os = "macos")]
 mod mac_quit;
 #[cfg(target_os = "macos")]
@@ -28,6 +29,10 @@ struct WinInfo {
     paths: Vec<String>,
     /// Files to open once the frontend is ready.
     pending: Vec<String>,
+    /// Folder shown in the sidebar (reopened if the page reloads).
+    folder: Option<String>,
+    /// Folder to show once the frontend is ready.
+    pending_folder: Option<String>,
 }
 
 #[derive(Default)]
@@ -38,6 +43,8 @@ struct AppState {
     last_focused: Mutex<Option<String>>,
     /// Staged drafts have been handed to a window for restoring.
     drafts_restored: AtomicBool,
+    /// The folder open at last quit has been handed to a window.
+    folder_restored: AtomicBool,
     /// One-time message for the first window (data migrated from mdit).
     notice: Mutex<Option<String>>,
 }
@@ -51,6 +58,8 @@ struct InitData {
     drafts_dir: String,
     /// Something to tell the user once, e.g. that mdit's data was migrated.
     notice: Option<String>,
+    /// Folder to show in the sidebar.
+    folder: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -113,6 +122,14 @@ fn normalize(path: &str) -> String {
 }
 
 fn create_window(app: &AppHandle, pending: Vec<String>) -> tauri::Result<WebviewWindow> {
+    create_window_with(app, pending, None)
+}
+
+fn create_window_with(
+    app: &AppHandle,
+    pending: Vec<String>,
+    folder: Option<String>,
+) -> tauri::Result<WebviewWindow> {
     let state = app.state::<AppState>();
     let n = state.counter.fetch_add(1, Ordering::SeqCst);
     let label = if n == 0 { "main".to_string() } else { format!("doc-{n}") };
@@ -121,6 +138,8 @@ fn create_window(app: &AppHandle, pending: Vec<String>) -> tauri::Result<Webview
         label.clone(),
         WinInfo {
             pending,
+            pending_folder: folder.clone(),
+            folder,
             ..Default::default()
         },
     );
@@ -161,6 +180,9 @@ fn create_window(app: &AppHandle, pending: Vec<String>) -> tauri::Result<Webview
 /// window (whose frontend reuses an empty tab or adds one), else a new window.
 fn route_path(app: &AppHandle, path: &str) {
     let path = normalize(path);
+    if Path::new(&path).is_dir() {
+        return route_folder(app, path);
+    }
     let front = front_window(app).map(|w| w.label().to_string());
     let target = {
         let state = app.state::<AppState>();
@@ -192,6 +214,51 @@ fn route_path(app: &AppHandle, path: &str) {
         }
         None => {
             let _ = create_window(app, vec![path]);
+        }
+    }
+}
+
+/// Show `path` in a sidebar: focus the window that already shows it, else use
+/// the front window if it has no folder yet, else open a new window.
+fn route_folder(app: &AppHandle, path: String) {
+    let front = front_window(app).map(|w| w.label().to_string());
+    let target = {
+        let state = app.state::<AppState>();
+        let mut wins = state.wins.lock().unwrap();
+        let label = wins
+            .iter()
+            .find(|(_, w)| w.folder.as_deref() == Some(path.as_str()))
+            .map(|(l, _)| l.clone())
+            .or_else(|| {
+                front
+                    .clone()
+                    .or_else(|| wins.keys().next().cloned())
+                    .filter(|l| wins.get(l).is_some_and(|w| w.folder.is_none()))
+            });
+        label.map(|label| {
+            let info = wins.get_mut(&label).unwrap();
+            let fresh = info.folder.as_deref() != Some(path.as_str());
+            // Claim it now, so a second folder routed meanwhile goes elsewhere.
+            info.folder = Some(path.clone());
+            if !info.ready {
+                info.pending_folder = Some(path.clone());
+            }
+            (label, info.ready && fresh)
+        })
+    };
+
+    match target {
+        Some((label, emit)) => {
+            if emit {
+                let _ = app.emit_to(label.as_str(), "open-folder", &path);
+            }
+            if let Some(w) = app.get_webview_window(&label) {
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }
+        None => {
+            let _ = create_window_with(app, Vec::new(), Some(path));
         }
     }
 }
@@ -280,7 +347,7 @@ fn file_args(args: impl Iterator<Item = String>, cwd: Option<&Path>) -> Vec<Stri
                 _ => a,
             }
         })
-        .filter(|a| Path::new(a).is_file())
+        .filter(|a| Path::new(a).is_file() || Path::new(a).is_dir())
         .collect()
 }
 
@@ -294,6 +361,7 @@ fn init_window(
     app: AppHandle,
     window: WebviewWindow,
     state: tauri::State<'_, AppState>,
+    settings: tauri::State<'_, settings::Settings>,
 ) -> Result<InitData, String> {
     let dir = drafts_dir(&app)?;
     let mut files = if state.drafts_restored.swap(true, Ordering::SeqCst) {
@@ -306,12 +374,28 @@ fn init_window(
     let info = wins.entry(window.label().to_string()).or_default();
     info.ready = true;
     let pending = std::mem::take(&mut info.pending);
+    let explicit = !pending.is_empty() || info.pending_folder.is_some();
     files.extend(if pending.is_empty() { info.paths.clone() } else { pending });
     files.dedup();
+
+    // A folder sent to this window, else the one it had before a reload, else
+    // (first window of a plain launch) the one open when edit2 last quit.
+    let mut folder = info.pending_folder.take().or_else(|| info.folder.clone());
+    let first = !state.folder_restored.swap(true, Ordering::SeqCst);
+    if folder.is_none() && first && !explicit {
+        folder = settings
+            .all()
+            .get("folder")
+            .and_then(|v| v.as_str())
+            .filter(|p| Path::new(p).is_dir())
+            .map(str::to_string);
+    }
+    info.folder = folder.clone();
     Ok(InitData {
         files,
         drafts_dir: dir.to_string_lossy().into_owned(),
         notice: state.notice.lock().unwrap().take(),
+        folder,
     })
 }
 
@@ -333,12 +417,37 @@ fn report_state(
     state: tauri::State<'_, AppState>,
     paths: Vec<String>,
     unsaved: bool,
+    folder: Option<String>,
 ) {
     let mut wins = state.wins.lock().unwrap();
     if let Some(info) = wins.get_mut(window.label()) {
         info.paths = paths.iter().map(|p| normalize(p)).collect();
         info.unsaved = unsaved;
+        info.folder = folder.map(|f| normalize(&f));
     }
+}
+
+#[derive(Serialize)]
+struct PathInfo {
+    /// Canonical path.
+    path: String,
+    dir: bool,
+}
+
+/// Whether `path` exists and is a folder; None if it does not exist.
+#[tauri::command]
+fn stat_path(path: String) -> Option<PathInfo> {
+    let meta = std::fs::metadata(&path).ok()?;
+    Some(PathInfo {
+        path: normalize(&path),
+        dir: meta.is_dir(),
+    })
+}
+
+/// One level of a folder for the sidebar tree, folders first.
+#[tauri::command]
+fn list_dir(path: String, show_hidden: Option<bool>) -> Result<Vec<fstree::Entry>, String> {
+    fstree::list(Path::new(&path), show_hidden.unwrap_or(false)).map_err(|e| e.to_string())
 }
 
 /// Read a text file, detecting its encoding unless one is given. A file over
@@ -418,6 +527,15 @@ fn set_format_menu(app: AppHandle, format: bool, minify: bool) {
     let _ = (app, format, minify);
 }
 
+/// The front window has (or has no) folder open.
+#[tauri::command]
+fn set_folder_menu(app: AppHandle, open: bool) {
+    #[cfg(target_os = "macos")]
+    menu::set_enabled(&app, &[("close_folder", open), ("toggle_sidebar", open)]);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, open);
+}
+
 #[tauri::command]
 fn load_settings(settings: tauri::State<'_, settings::Settings>) -> serde_json::Map<String, serde_json::Value> {
     settings.all()
@@ -491,10 +609,13 @@ pub fn run() {
             delete_draft,
             allow_assets,
             set_format_menu,
+            set_folder_menu,
             serve_preview,
             load_settings,
             set_setting,
             file_mtime,
+            stat_path,
+            list_dir,
             quit
         ])
         .setup(|app| {

@@ -35,6 +35,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             &item("new", "新建", "CmdOrCtrl+N")?,
             &item("new_tab", "新建标签页", "CmdOrCtrl+T")?,
             &item("open", "打开…", "CmdOrCtrl+O")?,
+            &item("open_folder", "打开文件夹…", "CmdOrCtrl+Shift+O")?,
+            &MenuItem::with_id(app, "close_folder", "关闭文件夹", true, None::<&str>)?,
             &sep()?,
             &item("save", "保存", "CmdOrCtrl+S")?,
             &item("save_as", "另存为…", "CmdOrCtrl+Shift+S")?,
@@ -83,6 +85,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             &item("mode_read", "阅读", "CmdOrCtrl+3")?,
             &item("toggle_preview", "切换预览", "CmdOrCtrl+\\")?,
             &item("toggle_wrap", "自动换行", "Alt+Z")?,
+            &item("toggle_sidebar", "显示/隐藏边栏", "CmdOrCtrl+Shift+E")?,
             &sep()?,
             &item("zoom_in", "放大字号", "CmdOrCtrl+=")?,
             &item("zoom_out", "缩小字号", "CmdOrCtrl+-")?,
@@ -111,7 +114,10 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     )?;
     app.set_menu(menu)?;
 
-    set_enabled(app, &[("format_doc", false), ("minify_doc", false)]);
+    set_enabled(
+        app,
+        &[("format_doc", false), ("minify_doc", false), ("close_folder", false), ("toggle_sidebar", false)],
+    );
 
     app.on_menu_event(|app, event| {
         let id = event.id().0.as_str();
@@ -123,7 +129,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             Some(w) => {
                 let _ = app.emit_to(w.label(), "menu", id);
             }
-            None if matches!(id, "new" | "new_tab" | "open") => {
+            None if matches!(id, "new" | "new_tab" | "open" | "open_folder") => {
                 let _ = crate::create_window(app, Vec::new());
             }
             None => {}

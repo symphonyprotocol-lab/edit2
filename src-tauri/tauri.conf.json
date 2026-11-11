@@ -93,6 +93,14 @@
         "role": "Editor",
         "rank": "Alternate",
         "mimeType": "text/html"
+      },
+      {
+        "ext": [],
+        "contentTypes": ["public.folder"],
+        "name": "Folder",
+        "description": "文件夹",
+        "role": "Viewer",
+        "rank": "Alternate"
       }
     ]
   }
