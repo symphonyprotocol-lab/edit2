@@ -42,27 +42,27 @@
         </aside>
 
         <div class="panes" id="panes">
-          <section class="empty" id="empty">
-            <div class="empty-box">
-              <div class="wordmark">edit<b>2</b></div>
-              <p class="tagline">打开任何文本文件，看一眼，改一下</p>
-              <div class="actions">
-                <button type="button" class="btn primary" id="btn-new">新建 <kbd data-key="N"></kbd></button>
-                <button type="button" class="btn" id="btn-open">打开… <kbd data-key="O"></kbd></button>
-              </div>
-              <div class="recent" id="recent" hidden>
-                <h4>最近</h4>
-                <ul id="recent-list"></ul>
-              </div>
-              <p class="drop-hint">或者把文件、文件夹拖到窗口任意位置 · <button type="button" class="link" id="btn-open-folder">打开文件夹…</button></p>
+        <section class="empty" id="empty">
+          <div class="empty-box">
+            <div class="wordmark">edit<b>2</b></div>
+            <p class="tagline">打开任何文本文件，看一眼，改一下</p>
+            <div class="actions">
+              <button type="button" class="btn primary" id="btn-new">新建 <kbd data-key="N"></kbd></button>
+              <button type="button" class="btn" id="btn-open">打开… <kbd data-key="O"></kbd></button>
             </div>
-          </section>
-
-          <div class="pane editor-pane" id="editor"></div>
-          <div class="pane preview-pane" id="preview-scroll">
-            <div class="preview-error" id="preview-error" role="alert" hidden></div>
-            <article class="preview" id="preview"></article>
+            <div class="recent" id="recent" hidden>
+              <h4>最近</h4>
+              <ul id="recent-list"></ul>
+            </div>
+            <p class="drop-hint">或者把文件、文件夹拖到窗口任意位置 · <button type="button" class="link" id="btn-open-folder">打开文件夹…</button></p>
           </div>
+        </section>
+
+        <div class="pane editor-pane" id="editor"></div>
+        <div class="pane preview-pane" id="preview-scroll">
+          <div class="preview-error" id="preview-error" role="alert" hidden></div>
+          <article class="preview" id="preview"></article>
+        </div>
         </div>
       </main>
 
