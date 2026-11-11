@@ -86,6 +86,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             &item("toggle_preview", "切换预览", "CmdOrCtrl+\\")?,
             &item("toggle_wrap", "自动换行", "Alt+Z")?,
             &item("toggle_sidebar", "显示/隐藏边栏", "CmdOrCtrl+Shift+E")?,
+            &item("toggle_outline", "显示/隐藏大纲", "CmdOrCtrl+Shift+D")?,
             &sep()?,
             &item("zoom_in", "放大字号", "CmdOrCtrl+=")?,
             &item("zoom_out", "缩小字号", "CmdOrCtrl+-")?,

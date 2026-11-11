@@ -641,6 +641,7 @@ countEl.addEventListener("click", () => {
 function setAnchors(list: { line: number; el: HTMLElement }[]) {
   anchors = list.map((a) => ({ ...a, top: 0 })).sort((a, b) => a.line - b.line);
   anchorsMeasured = false;
+  buildOutline();
 }
 
 function loadRenderer(format: FormatPlugin): PreviewRenderer | Promise<PreviewRenderer> {
@@ -916,6 +917,153 @@ divider.addEventListener("keydown", (e) => {
   applySplit(e.key === "Enter" ? 0.5 : clampRatio(target));
 });
 
+// ---------- outline (Markdown, Read view) ----------
+
+const outlineList = $("outline-list");
+const outlineBtn = $<HTMLButtonElement>("outline-toggle");
+/** Below this width the panes cannot hold the outline beside a readable column. */
+const OUTLINE_ROOM = 860;
+/** Headings in the preview, in document order, and their outline entries. */
+let headings: HTMLElement[] = [];
+let outlineItems: HTMLButtonElement[] = [];
+/** What the entries were built from, so re-renders with the same headings keep them. */
+let outlineKey = "";
+let activeHeading = -1;
+/** A heading picked in the outline stays highlighted while it is in view. */
+let pickedHeading = -1;
+let pickedAt = 0;
+
+const outlineWanted = () => prefs.get("outline", true);
+const outlineShown = () =>
+  app.classList.contains("has-outline") && outlineWanted() && !app.classList.contains("outline-cramped");
+
+/** Rebuild the outline from the headings now in the preview. */
+function buildOutline() {
+  headings =
+    previewFormat?.id === "markdown" ? [...preview.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")] : [];
+  const entries = headings.map((h) => ({ level: Number(h.tagName[1]), text: (h.textContent ?? "").trim() }));
+  const key = JSON.stringify(entries);
+  if (key !== outlineKey) {
+    outlineKey = key;
+    const top = Math.min(...entries.map((e) => e.level));
+    outlineItems = entries.map((e, i) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "ol-item";
+      item.dataset.index = String(i);
+      item.dataset.depth = String(e.level - top);
+      item.style.setProperty("--depth", String(e.level - top));
+      item.textContent = item.title = e.text || "（无标题）";
+      return item;
+    });
+    outlineList.replaceChildren(...outlineItems);
+    activeHeading = pickedHeading = -1;
+  }
+  syncOutline();
+}
+
+/** Show or hide the outline for the current tab and view. */
+function syncOutline() {
+  const markdown = doc.started && mode === "read" && doc.format.id === "markdown";
+  const before = outlineShown();
+  app.classList.toggle("has-outline", markdown && headings.length > 0);
+  app.classList.toggle("outline-on", outlineWanted());
+  const on = outlineWanted();
+  const keys = isMac ? "⇧⌘D" : "Ctrl+Shift+D";
+  outlineBtn.setAttribute("aria-pressed", String(on));
+  outlineBtn.setAttribute("aria-label", on ? "隐藏大纲" : "显示大纲");
+  outlineBtn.title = `${on ? "隐藏大纲" : "显示大纲"} ${keys}`;
+  if (outlineShown() !== before) anchorsMeasured = false;
+  updateActiveHeading();
+}
+
+function toggleOutline() {
+  if (!doc.started) return;
+  if (doc.format.id !== "markdown") return toast("只有 Markdown 文档有大纲");
+  const on = !outlineWanted();
+  prefs.set("outline", on);
+  syncOutline();
+  // Say so when nothing visibly changes.
+  if (mode !== "read") toast(on ? "大纲已打开，在阅读视图中显示" : "大纲已隐藏");
+  else if (on && !headings.length) toast("大纲已打开，这篇文档没有标题");
+  else if (on && app.classList.contains("outline-cramped")) toast("大纲已打开，窗口放宽后显示");
+}
+
+/** Highlight the section being read: the last heading above a line near the top of the pane. */
+function updateActiveHeading() {
+  if (!outlineShown()) return;
+  const box = previewScroll.getBoundingClientRect();
+  const visible = (h: HTMLElement) => {
+    const r = h.getBoundingClientRect();
+    return r.height > 0 && r.top >= box.top - 1 && r.top < box.bottom;
+  };
+  if (pickedHeading >= 0) {
+    // While the picked heading is being scrolled to, or is still in view, it wins.
+    const h = headings[pickedHeading];
+    if (h?.isConnected && (performance.now() - pickedAt < 1000 || visible(h))) return setActiveHeading(pickedHeading);
+    pickedHeading = -1;
+  }
+  const reading = box.top + Math.min(80, box.height / 4);
+  const atEnd = previewScroll.scrollTop + previewScroll.clientHeight >= previewScroll.scrollHeight - 2;
+  let index = -1;
+  for (let i = 0; i < headings.length; i++) {
+    const r = headings[i].getBoundingClientRect();
+    if (!r.height) continue; // inside a closed <details>
+    if (r.top <= reading || (atEnd && r.top < box.bottom)) index = i;
+    else break;
+  }
+  setActiveHeading(index);
+}
+
+function setActiveHeading(index: number) {
+  if (index === activeHeading && outlineItems[index]?.classList.contains("active")) return;
+  outlineItems[activeHeading]?.classList.remove("active");
+  outlineItems[activeHeading]?.removeAttribute("aria-current");
+  activeHeading = index;
+  const item = outlineItems[index];
+  if (!item) return;
+  item.classList.add("active");
+  item.setAttribute("aria-current", "location");
+  // Keep it in sight in the outline (by hand: scrollIntoView would move the window too).
+  const list = outlineList;
+  if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop - 8;
+  else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight) {
+    list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight + 8;
+  }
+}
+
+function goToHeading(index: number) {
+  const h = headings[index];
+  if (!h?.isConnected) return;
+  pickedHeading = index;
+  pickedAt = performance.now();
+  setActiveHeading(index);
+  const top = previewScroll.scrollTop + h.getBoundingClientRect().top - previewScroll.getBoundingClientRect().top - 16;
+  previewScroll.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+}
+
+outlineList.addEventListener("click", (e) => {
+  const item = (e.target as HTMLElement).closest<HTMLElement>(".ol-item");
+  if (item) goToHeading(Number(item.dataset.index));
+});
+
+// ↑ / ↓ move between entries, Home / End to the first and last.
+outlineList.addEventListener("keydown", (e) => {
+  const at = outlineItems.indexOf(document.activeElement as HTMLButtonElement);
+  if (at < 0) return;
+  const next = ({ ArrowUp: at - 1, ArrowDown: at + 1, Home: 0, End: outlineItems.length - 1 } as Record<string, number>)[
+    e.key
+  ];
+  if (next === undefined) return;
+  e.preventDefault();
+  outlineItems[Math.max(0, Math.min(outlineItems.length - 1, next))].focus();
+});
+
+outlineBtn.addEventListener("click", toggleOutline);
+
+// Scroll events already come at most once a frame.
+previewScroll.addEventListener("scroll", updateActiveHeading, { passive: true });
+
 // ---------- view modes & font size ----------
 
 /** View last used for each format (format id → mode). */
@@ -939,6 +1087,7 @@ function applyMode(next: Mode) {
     b.setAttribute("aria-checked", String(b.dataset.mode === next));
     b.disabled = !doc.format.preview && b.dataset.mode !== "write";
   }
+  syncOutline();
 }
 
 function setMode(next: Mode) {
@@ -1568,7 +1717,9 @@ resizer.addEventListener("dblclick", () => {
 new ResizeObserver(([entry]) => {
   const sidebar = app.classList.contains("has-folder") && !app.classList.contains("sidebar-hidden");
   app.classList.toggle("narrow", entry.contentRect.width < (sidebar ? 640 : 760));
+  app.classList.toggle("outline-cramped", entry.contentRect.width < OUTLINE_ROOM);
   anchorsMeasured = false;
+  syncOutline();
 }).observe(panesEl);
 
 /**
@@ -1846,6 +1997,7 @@ const commands: Record<string, () => unknown> = {
   zoom_out: () => applyFont(fontSize - 1),
   zoom_reset: () => applyFont(15),
   toggle_wrap: () => doc.started && toggleWrap(),
+  toggle_outline: toggleOutline,
   format_doc: () => runFormatter("format"),
   minify_doc: () => runFormatter("minify"),
 };
@@ -1876,7 +2028,7 @@ window.addEventListener(
     if (mod && handleShortcutsInPage && !e.altKey) {
       const k = e.key.toLowerCase();
       const id = e.shiftKey
-        ? ({ s: "save_as", r: "reveal", w: "close_window", o: "open_folder", e: "toggle_sidebar" } as Record<string, string>)[k] ??
+        ? ({ s: "save_as", r: "reveal", w: "close_window", o: "open_folder", e: "toggle_sidebar", d: "toggle_outline" } as Record<string, string>)[k] ??
           ({ BracketLeft: "prev_tab", BracketRight: "next_tab" } as Record<string, string>)[e.code]
         : ({
             n: "new", t: "new_tab", o: "open", s: "save", w: "close", q: "quit",
@@ -1946,6 +2098,7 @@ async function boot() {
       if (value === null) delete settings[key];
       else settings[key] = value;
       if (key === "recent") renderRecent();
+      if (key === "outline") syncOutline();
       if (key === "sidebarWidth" && typeof value === "number") applySidebarWidth(value);
     });
 

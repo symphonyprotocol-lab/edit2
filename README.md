@@ -36,6 +36,7 @@ Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edi
 
 - **Three views**: Write (editor only), Split (editor and live preview with synced scrolling) and Read (preview only), remembered per format. In Split, drag the divider to resize the two panes (double-click to reset it to half and half; arrow keys work when it has focus), and each tab keeps its own width; new tabs start at half and half. When the area beside the sidebar (the whole window if there is none) is narrower than 760 px, or 640 px next to the sidebar, Split falls back to the editor. Plain text has only Write.
 - **Markdown editing**: dimmed markup characters, highlighting inside fenced code blocks, automatic list continuation, and formatting shortcuts (⌘B bold, ⌘I italic, ⌘E inline code, ⌘K link, ⇧⌘X strikethrough). Clicking a task box in the preview updates the source.
+- **Outline**: in Read view, a Markdown document with headings shows an outline of them on the right. Click an entry to scroll to that heading; the section you are reading is highlighted as you scroll. Hide or show it with the button at the top right of the preview or ⇧⌘D; the choice is remembered. Documents without headings show no outline, and it steps aside when the area beside the sidebar is narrower than 860 px.
 - **Links**: external links open in the system browser; links to other files of a supported format open them in edit2, other files are shown in Finder.
 - **Folders**: Open Folder (⇧⌘O, the File menu, or the link on the start screen), dropping a folder on the window or the Dock icon, Finder "Open With" or `edit2 path/to/folder` shows the folder as a tree in a sidebar. Folders come first, then files by name; dotfiles, `node_modules` and `__pycache__` are hidden unless you turn on "显示隐藏文件" in the sidebar's ⋯ menu. A folder's contents are read when you expand it, again each time you reopen it, and when the window comes back to the front. Clicking a file opens it as a tab like ⌘O does (files of unknown type open as plain text, binary files are refused), and the active tab's file is highlighted. Drag the sidebar's right edge to resize it (double-click for the default width), hide it with ⇧⌘E or the button next to the window controls, and close the folder with × or File → Close Folder. Each window has at most one folder, and keeps it:
   - In a window that shows a folder, Open… (⌘O) and Open Folder… (⇧⌘O) open what you pick in a new window, and dropping another folder on it does the same. Without a folder they open in the current window, as before.
@@ -50,7 +51,7 @@ Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edi
 - **Encodings**: the encoding is detected (UTF-8, UTF-16, GBK/GB18030, Big5, Shift_JIS, EUC-KR, Windows-1252, …) and files are written back in it, keeping a byte order mark and CRLF or LF line endings. A "?" after the encoding means it was guessed from little text; the status bar menu reopens the file in another encoding or saves it in one. If you type characters the encoding cannot hold, edit2 does not save them lossily: it offers to switch to UTF-8. Binary files are refused.
 - **Large files**: from 5 MB, the preview and word count wait for a click. Files over 50 MB open read-only after you confirm.
 - **Appearance**: follows the system light or dark setting. The font size is adjustable (⌘= / ⌘- / ⌘0), and soft wrap can be turned off per tab (⌥Z).
-- **Settings** (views, font size, recent files, per-file formats, the open folders and the sidebar's width) are kept in `settings.json` in the app data folder. The first launch copies mdit's drafts and settings over and leaves mdit's own data in place.
+- **Settings** (views, font size, recent files, per-file formats, whether the outline is shown, the open folders and the sidebar's width) are kept in `settings.json` in the app data folder. The first launch copies mdit's drafts and settings over and leaves mdit's own data in place.
 
 ## Upgrading from mdit
 
@@ -67,6 +68,7 @@ Get the latest build from [Releases](https://github.com/symphonyprotocol-lab/edi
 | Open | ⌘O | Ctrl+O |
 | Open Folder | ⇧⌘O | Ctrl+Shift+O |
 | Show / hide sidebar | ⇧⌘E | Ctrl+Shift+E |
+| Show / hide outline (Read view) | ⇧⌘D | Ctrl+Shift+D |
 | Save / Save As | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S |
 | Show in Finder | ⇧⌘R | Ctrl+Shift+R |
 | Write / Split / Read | ⌘1 / ⌘2 / ⌘3 | Ctrl+1 / 2 / 3 |
