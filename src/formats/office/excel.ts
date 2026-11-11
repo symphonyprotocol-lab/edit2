@@ -2,12 +2,12 @@
  * Excel viewer: one sheet at a time as a table with column letters and row
  * numbers that stay in view, merged cells spanning, and rows added as you
  * scroll. Values are those saved with the file (formulas are not recomputed).
- * Read-only; .xls gets a card offering the system app.
+ * Read-only. Files are read by SheetJS (workbook.ts), loaded with this viewer.
  */
 import "./office.css";
 import { keepPoint, mountStage, onPinchZoom } from "../shared/viewer";
 import { columnName, readWorkbook, type Sheet } from "./workbook";
-import { describe, extOf, legacyCard, toolbar } from "./common";
+import { describe, toolbar } from "./common";
 import type { PreviewContext, PreviewRenderer } from "../types";
 
 const PAGE = 500;
@@ -32,14 +32,12 @@ interface Shown {
   stop: AbortController;
   /** Stops the current sheet's lazy rows. */
   more: IntersectionObserver | null;
-  legacy: boolean;
 }
 let shown: Shown | null = null;
 
 function pushStatus() {
   if (!shown) return;
   const s = shown;
-  if (s.legacy) return s.ctx.setStatus("", "Excel · 旧版格式");
   const sheet = s.sheets[s.sheet];
   const rows = sheet ? sheet.rows.length : 0;
   s.ctx.setStatus(
@@ -172,16 +170,13 @@ async function render(_source: string, ctx: PreviewContext) {
     pushStatus();
     return {};
   }
-  const legacy = extOf(path) === "xls";
-  let sheets: Sheet[] = [];
-  if (!legacy) {
-    try {
-      sheets = await readWorkbook(await file.read(0, file.size));
-    } catch (err) {
-      return ctx.isCurrent() ? { error: { message: describe("表格", err) } } : {};
-    }
-    if (!ctx.isCurrent()) return {};
+  let sheets: Sheet[];
+  try {
+    sheets = await readWorkbook(await file.read(0, file.size));
+  } catch (err) {
+    return ctx.isCurrent() ? { error: { message: describe("表格", err) } } : {};
   }
+  if (!ctx.isCurrent()) return {};
 
   const hadFocus = !!shown?.stage.contains(document.activeElement);
   teardown();
@@ -189,14 +184,9 @@ async function render(_source: string, ctx: PreviewContext) {
   const place = places.get(path);
   const s: Shown = {
     path, version: file.version, stage, sheets, sheet: 0, scale: place?.scale ?? 1,
-    wrap: null, tabs: null, bar: null, ctx, stop: new AbortController(), more: null, legacy,
+    wrap: null, tabs: null, bar: null, ctx, stop: new AbortController(), more: null,
   };
   shown = s;
-  if (legacy) {
-    stage.append(legacyCard(ctx, "Excel", "xls"));
-    pushStatus();
-    return {};
-  }
 
   const bar = toolbar(ctx, "只读 · 显示文件里保存的值，公式不会重新计算");
   const tabs = document.createElement("div");

@@ -132,7 +132,7 @@
         "rank": "Alternate"
       },
       {
-        "ext": ["xlsx", "xlsm", "ods", "xls"],
+        "ext": ["xlsx", "xlsm", "xlsb", "xls", "ods"],
         "name": "Spreadsheet",
         "description": "电子表格",
         "role": "Viewer",

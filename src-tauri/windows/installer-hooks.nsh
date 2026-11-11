@@ -136,6 +136,7 @@
   !insertmacro ${MACRO} "doc"
   !insertmacro ${MACRO} "xlsx"
   !insertmacro ${MACRO} "xlsm"
+  !insertmacro ${MACRO} "xlsb"
   !insertmacro ${MACRO} "ods"
   !insertmacro ${MACRO} "xls"
   !insertmacro ${MACRO} "pptx"
