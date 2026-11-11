@@ -1447,9 +1447,12 @@ resizer.addEventListener("dblclick", () => {
 });
 
 // Split view needs room for two panes: judge by the area beside the sidebar,
-// which is the whole window when there is none (as before folders existed).
+// which is the whole window when there is none (760px, as before folders).
+// Beside the sidebar, panes may be a little narrower, so that the default
+// 920px window with a 240px sidebar still splits.
 new ResizeObserver(([entry]) => {
-  app.classList.toggle("narrow", entry.contentRect.width < 760);
+  const sidebar = app.classList.contains("has-folder") && !app.classList.contains("sidebar-hidden");
+  app.classList.toggle("narrow", entry.contentRect.width < (sidebar ? 640 : 760));
   anchorsMeasured = false;
 }).observe(panesEl);
 

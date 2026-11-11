@@ -299,7 +299,7 @@ button { font: inherit; color: inherit; }
 #app[data-mode="read"] .preview-pane { border-left: 0; }
 #app.is-empty .pane { display: none; }
 
-/* Too narrow for two panes (the area beside the sidebar, set from main.ts). */
+/* Too narrow for two panes (judged by the area beside the sidebar in main.ts). */
 #app.narrow[data-mode="split"] .preview-pane { display: none; }
 #app.narrow[data-mode="split"]:not(.has-folder) .titlebar { border-bottom-color: transparent; }
 /* The sidebar draws its own line under the title bar. */
