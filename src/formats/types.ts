@@ -14,6 +14,10 @@ export interface FormatPlugin {
   label: string;
   /** Lower-case extensions without the dot. */
   extensions: string[];
+  /** Whole file names this format claims whatever their extension (e.g. "dockerfile"), lower-case. */
+  filenames?: string[];
+  /** Formats sharing a group (e.g. code languages) share one entry in menus and dialogs. */
+  group?: string;
   /** Editor language; may load lazily the first time a file of this format opens. */
   language?: () => Extension | Promise<Extension>;
   /** Format-specific editor behaviour (key bindings and the like). */

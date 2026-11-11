@@ -10,9 +10,10 @@ const plugins = new Set();
 for (const dir of readdirSync(formats, { withFileTypes: true })) {
   const index = new URL(`${dir.name}/index.ts`, formats);
   if (!dir.isDirectory() || !existsSync(index)) continue;
-  const m = /extensions:\s*\[([^\]]*)\]/.exec(readFileSync(index, "utf8"));
-  if (!m) continue;
-  for (const ext of m[1].matchAll(/"([^"]+)"/g)) plugins.add(ext[1]);
+  // A plugin folder may define several formats (src/formats/code: one per language).
+  for (const m of readFileSync(index, "utf8").matchAll(/extensions:\s*\[([^\]]*)\]/g)) {
+    for (const ext of m[1].matchAll(/"([^"]+)"/g)) plugins.add(ext[1]);
+  }
 }
 
 const associated = (file) => JSON.parse(read(file)).bundle.fileAssociations.flatMap((a) => a.ext);
