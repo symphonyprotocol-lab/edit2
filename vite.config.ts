@@ -1,5 +1,7 @@
-import { readdir, stat, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile, stat, realpath } from "node:fs/promises";
+import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, normalize, sep } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
 const host = process.env.TAURI_DEV_HOST;
@@ -54,9 +56,46 @@ function devFolders(): Plugin {
   };
 }
 
+/**
+ * Data files pdf.js loads at run time, served under /pdfjs/: Adobe CMaps (CJK
+ * text in PDFs whose fonts are not embedded), the standard 14 fonts, the wasm
+ * image decoders (JPEG 2000, JBIG2, CCITT) with their JS fallbacks, and the
+ * colour profiles. The scripting engine (quickjs) is left out: PDF scripts never run.
+ */
+function pdfjsData(): Plugin {
+  const root = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
+  const dirs = ["cmaps", "standard_fonts", "wasm", "iccs"];
+  const wanted = (dir: string, name: string) => dirs.includes(dir) && !name.startsWith("quickjs");
+  return {
+    name: "edit2-pdfjs-data",
+    configureServer(server) {
+      server.middlewares.use("/pdfjs", async (req, res, next) => {
+        const rel = normalize(decodeURIComponent((req.url ?? "").split("?")[0])).replace(/^[\\/]+/, "");
+        const [dir, name] = rel.split(sep);
+        if (!name || rel.split(sep).length !== 2 || !wanted(dir, name)) return next();
+        try {
+          const body = await readFile(join(root, dir, name));
+          res.setHeader("Content-Type", name.endsWith(".wasm") ? "application/wasm" : name.endsWith(".js") ? "text/javascript" : "application/octet-stream");
+          res.end(body);
+        } catch {
+          next();
+        }
+      });
+    },
+    generateBundle() {
+      for (const dir of dirs) {
+        for (const name of readdirSync(join(root, dir))) {
+          if (!wanted(dir, name)) continue;
+          this.emitFile({ type: "asset", fileName: `pdfjs/${dir}/${name}`, source: readFileSync(join(root, dir, name)) });
+        }
+      }
+    },
+  };
+}
+
 export default defineConfig({
   clearScreen: false,
-  plugins: [devFolders()],
+  plugins: [devFolders(), pdfjsData()],
   server: {
     port: 1420,
     strictPort: true,

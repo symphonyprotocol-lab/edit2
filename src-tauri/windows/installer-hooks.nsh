@@ -3,7 +3,7 @@
 ; On Windows a bundle file association makes edit2 the default app for the
 ; extension, so tauri.windows.conf.json only associates Markdown. Every other
 ; format is added to Explorer's "Open with" list instead, leaving .html, .svg,
-; .json and the rest with the browser or editor the user already has.
+; .json, .pdf and the rest with the browser or app the user already has.
 ; `npm run build` checks these extensions against the format plugins.
 
 !define EDIT2_PROGID "edit2.File"
@@ -118,6 +118,7 @@
   !insertmacro ${MACRO} "tex"
   !insertmacro ${MACRO} "sty"
   !insertmacro ${MACRO} "cls"
+  !insertmacro ${MACRO} "pdf"
 !macroend
 
 !macro EDIT2_ADD_OPEN_WITH EXT

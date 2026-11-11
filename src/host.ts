@@ -60,6 +60,14 @@ export interface PathInfo {
   dir: boolean;
 }
 
+/** A binary file (PDF) about to be shown; its bytes are read in ranges. */
+export interface BinaryInfo {
+  /** Canonical path. */
+  path: string;
+  size: number;
+  mtime: number | null;
+}
+
 export interface Written {
   /** Canonical path of the file that was written. */
   path: string;
@@ -81,6 +89,23 @@ async function devRead(path: string): Promise<FileData> {
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   const content = await res.text();
   return { path, content, mtime: 0, encoding: "UTF-8", bom: false, guessed: false, size: content.length };
+}
+
+/** Dev only, in a plain browser: whole binary files fetched through the vite server, by path. */
+const devBinaries = new Map<string, Promise<Uint8Array>>();
+
+function devBinary(path: string): Promise<Uint8Array> {
+  if (!import.meta.env.DEV) return Promise.reject(new Error("需要在 Tauri 中运行"));
+  let bytes = devBinaries.get(path);
+  if (!bytes) {
+    bytes = fetch(`/@fs${path}`).then(async (res) => {
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return new Uint8Array(await res.arrayBuffer());
+    });
+    devBinaries.set(path, bytes);
+    bytes.catch(() => devBinaries.delete(path));
+  }
+  return bytes;
 }
 
 /**
@@ -150,6 +175,33 @@ export const host = {
       const m = /^TOO_LARGE:(\d+)$/.exec(String(err));
       throw m ? new TooLargeError(Number(m[1])) : err;
     }
+  },
+
+  /** Check that a binary file (PDF) can be shown, and get its size. Nothing is decoded as text. */
+  async openBinary(path: string): Promise<BinaryInfo> {
+    if (inTauri) return invoke<BinaryInfo>("open_binary", { path });
+    devBinaries.delete(path); // a fresh copy for a reload
+    const bytes = await devBinary(path);
+    return { path, size: bytes.length, mtime: 0 };
+  },
+
+  /** Up to `length` bytes of a binary file from `offset`. */
+  async readBytes(path: string, offset: number, length: number): Promise<Uint8Array> {
+    if (!inTauri) return (await devBinary(path)).slice(offset, offset + length);
+    // The backend returns at most 64 MB per call: read bigger ranges in pieces.
+    const PIECE = 32 * 1024 * 1024;
+    const read = (at: number, n: number) =>
+      invoke<ArrayBuffer>("read_bytes", { path, offset: at, length: n }).then((b) => new Uint8Array(b));
+    if (length <= PIECE) return read(offset, length);
+    const out = new Uint8Array(length);
+    let got = 0;
+    while (got < length) {
+      const piece = await read(offset + got, Math.min(PIECE, length - got));
+      out.set(piece, got);
+      got += piece.length;
+      if (piece.length === 0) break; // end of file
+    }
+    return got === length ? out : out.slice(0, got);
   },
 
   async writeFile(path: string, content: string, encoding = "UTF-8", bom = false): Promise<Written> {

@@ -29,6 +29,7 @@ import {
   type PreviewContext,
   type PreviewRenderer,
   type RenderResult,
+  type BinaryFile,
 } from "./formats";
 import { host, inTauri, isMac, TooLargeError, UnmappableError, type DialogFilter, type FileData } from "./host";
 import { TabBar } from "./tabs";
@@ -143,6 +144,8 @@ interface Tab {
   size: number;
   /** The editor's share of the split view; every new tab starts at half and half. */
   split: number;
+  /** Binary formats: status bar text the viewer reports (position, summary). */
+  viewerStatus: [string, string];
 }
 
 const AUTOSAVE_DELAY = 800;
@@ -159,8 +162,12 @@ const overrides = (): Record<string, string> => prefs.get("formatOverrides", {})
 
 /** The format a file is shown as: the user's choice, else by its extension. */
 function formatOf(path: string | null): FormatPlugin {
+  const byName = formatFor(path);
+  // A binary file is only ever shown by its viewer; text never as a binary format.
+  if (byName.binary) return byName;
   const id = path ? overrides()[path] : undefined;
-  return (id && formatById(id)) || formatFor(path);
+  const chosen = id ? formatById(id) : undefined;
+  return chosen && !chosen.binary ? chosen : byName;
 }
 
 function rememberOverride(path: string, format: FormatPlugin | null) {
@@ -212,7 +219,7 @@ function reconfigure(tab: Tab) {
 
 /** Show a tab as another format (status bar choice, or a renamed file). */
 function setFormat(tab: Tab, format: FormatPlugin) {
-  if (tab.format === format) return;
+  if (tab.format === format || tab.format.binary || format.binary) return;
   tab.format = format;
   loadLanguage(format);
   reconfigure(tab);
@@ -252,6 +259,7 @@ function createTab(text = "", started = true, format = formatOf(null)): Tab {
     previewWanted: false,
     size: 0,
     split: 0.5,
+    viewerStatus: ["", ""],
   };
 }
 
@@ -402,7 +410,11 @@ function refreshChrome() {
   }
 
   saveEl.className = "";
-  if (doc.readOnly) {
+  saveEl.title = "";
+  if (doc.format.binary) {
+    saveEl.textContent = "只读";
+    saveEl.title = `${doc.format.label} 文件只能查看，edit2 不会写入它`;
+  } else if (doc.readOnly) {
     saveEl.textContent = "只读 · 文件过大";
   } else if (doc.unmappable) {
     saveEl.textContent = `无法用 ${encodingName(doc.encoding, doc.bom)} 保存`;
@@ -428,7 +440,8 @@ function refreshChrome() {
 
   formatEl.textContent = doc.format.label;
   syncFormatMenu();
-  encodingEl.textContent = encodingName(doc.encoding, doc.bom) + (doc.guessed ? "?" : "");
+  // Binary files have no encoding: the button empties and hides.
+  encodingEl.textContent = doc.format.binary ? "" : encodingName(doc.encoding, doc.bom) + (doc.guessed ? "?" : "");
   encodingEl.title = doc.guessed ? "编码是根据很少的内容推测的，乱码时可换一种编码重新打开" : "文件编码";
   app.classList.toggle("no-preview", !doc.format.preview);
 
@@ -439,6 +452,10 @@ function refreshChrome() {
 }
 
 function updatePos() {
+  if (doc.format.binary) {
+    posEl.textContent = doc.viewerStatus[0];
+    return;
+  }
   if (mode === "read") {
     posEl.textContent = "";
     return;
@@ -455,6 +472,11 @@ function scheduleCount() {
 }
 
 function updateCount() {
+  if (doc.format.binary) {
+    countEl.classList.remove("clickable");
+    countEl.textContent = doc.viewerStatus[1];
+    return;
+  }
   countEl.classList.toggle("clickable", doc.large && !doc.previewWanted);
   if (doc.large && !doc.previewWanted) {
     countEl.textContent = doc.readOnly ? "只读大文件 · 点击统计" : "大文件，预览已暂停 · 点击统计";
@@ -593,7 +615,7 @@ function previewContext(seq: number, tab: Tab): PreviewContext {
     assetUrls,
     openLink,
     editSource(fn) {
-      if (doc !== tab) return;
+      if (doc !== tab || tab.format.binary) return;
       const change = fn(view.state.doc);
       if (!change) return;
       view.dispatch({ changes: change, userEvent: "input" });
@@ -604,6 +626,22 @@ function previewContext(seq: number, tab: Tab): PreviewContext {
     publishPage: (html) => publishPage(tab, html),
     layoutChanged: () => (anchorsMeasured = false),
     isCurrent: () => seq === renderSeq && doc === tab,
+    file: tab.format.binary && tab.path ? binaryFile(tab.path, tab) : undefined,
+    setStatus(position, summary) {
+      tab.viewerStatus = [position, summary];
+      if (doc !== tab) return;
+      updatePos();
+      updateCount();
+    },
+  };
+}
+
+/** A binary file as the viewer reads it, at the size and time it had when last checked. */
+function binaryFile(path: string, tab: Tab): BinaryFile {
+  return {
+    size: tab.size,
+    version: `${tab.mtime}:${tab.size}`,
+    read: (offset, length) => host.readBytes(path, offset, length),
   };
 }
 
@@ -1070,6 +1108,7 @@ const modePrefs = (): Record<string, Mode> => prefs.get("modes", {});
 
 function preferredMode(format: FormatPlugin): Mode {
   if (!format.preview) return "write";
+  if (format.binary) return "read";
   // Markdown keeps the single view setting from before formats existed.
   const legacy = format.id === "markdown" ? prefs.get<Mode | null>("mode", null) : null;
   return modePrefs()[format.id] ?? legacy ?? format.defaultMode;
@@ -1078,13 +1117,14 @@ function preferredMode(format: FormatPlugin): Mode {
 /** Switch the layout without remembering it as a preference. */
 function applyMode(next: Mode) {
   if (!doc.format.preview) next = "write";
+  if (doc.format.binary) next = "read";
   mode = next;
   app.dataset.mode = next;
   layoutSplit();
   anchorsMeasured = false;
   for (const b of document.querySelectorAll<HTMLButtonElement>(".seg button")) {
     b.setAttribute("aria-checked", String(b.dataset.mode === next));
-    b.disabled = !doc.format.preview && b.dataset.mode !== "write";
+    b.disabled = doc.format.binary ? b.dataset.mode !== "read" : !doc.format.preview && b.dataset.mode !== "write";
   }
   syncOutline();
 }
@@ -1092,6 +1132,10 @@ function applyMode(next: Mode) {
 function setMode(next: Mode) {
   if (!doc.format.preview && next !== "write") {
     toast(`${doc.format.label}没有预览`);
+    return;
+  }
+  if (doc.format.binary && next !== "read") {
+    if (doc.started) toast(`${doc.format.label} 文件只能在阅读视图中查看`);
     return;
   }
   const line = mode === "read" ? null : editorTopLine();
@@ -1108,9 +1152,22 @@ function setMode(next: Mode) {
     });
   }
   if (doc.started) {
-    if (next === "read") previewScroll.focus({ preventScroll: true });
+    if (next === "read") focusPreview();
     else view.focus();
   }
+}
+
+/** Focus what scrolls in Read view: the pane, or a viewer's own scroller (PDF). */
+function focusPreview() {
+  (preview.querySelector<HTMLElement>("[data-preview-focus]") ?? previewScroll).focus({ preventScroll: true });
+}
+
+/** ⌘= / ⌘- / ⌘0: a preview that zooms itself (PDF) takes them in Read view; else the font size. */
+function zoom(step: 1 | -1 | 0) {
+  const renderer = mode === "read" && previewFormat === doc.format ? renderers.get(doc.format.id) : undefined;
+  if (renderer?.zoom?.(step)) return;
+  if (doc.format.binary) return;
+  applyFont(step === 0 ? 15 : fontSize + step);
 }
 
 function applyFont(px: number) {
@@ -1170,6 +1227,7 @@ function formatMenu(): MenuEntry[] {
   const key = tab.path ?? tab.draft;
   const byExtension = formatFor(tab.path);
   const overridden = !!key && overrides()[key] !== undefined;
+  if (tab.format.binary) return [{ heading: `${tab.format.label} 文件只能查看，不能换成其他格式显示` }];
   const entries: MenuEntry[] = [{ heading: "显示为" }];
   const item = (format: FormatPlugin): MenuEntry => ({
     label: format.label,
@@ -1182,6 +1240,7 @@ function formatMenu(): MenuEntry[] {
   // A group (the code languages) is one entry here that opens its own list.
   const groups = new Map<string, FormatPlugin[]>();
   for (const format of allFormats()) {
+    if (format.binary) continue;
     if (!format.group) {
       entries.push(item(format));
       continue;
@@ -1318,6 +1377,7 @@ formatEl.addEventListener("click", () => showMenu(formatEl, formatMenu()));
 
 function encodingMenu(): MenuEntry[] {
   const tab = doc;
+  if (tab.format.binary) return [];
   const entries: MenuEntry[] = [{ heading: "用其他编码重新打开" }];
   for (const e of ENCODINGS.filter((e) => !e.bom || e.encoding !== "UTF-8")) {
     entries.push({
@@ -1343,7 +1403,7 @@ encodingEl.addEventListener("click", () => showMenu(encodingEl, encodingMenu()))
 
 /** Read the file again, decoding it as `encoding` (detection guessed wrong). */
 async function reopenWithEncoding(tab: Tab, encoding: string) {
-  if (!tab.path) return;
+  if (!tab.path || tab.format.binary) return;
   await autosave(tab);
   if (tab.dirty && !(await host.ask(`用 ${encoding} 重新打开“${tabName(tab)}”？`, "未保存的修改会丢失。", "重新打开"))) {
     return;
@@ -1366,6 +1426,7 @@ async function reopenWithEncoding(tab: Tab, encoding: string) {
 
 /** Write the file in another encoding from now on. */
 async function saveWithEncoding(tab: Tab, encoding: string, bom: boolean) {
+  if (tab.format.binary) return;
   const before = [tab.encoding, tab.bom] as const;
   tab.encoding = encoding;
   tab.bom = bom;
@@ -1385,6 +1446,7 @@ async function saveWithEncoding(tab: Tab, encoding: string, bom: boolean) {
 }
 
 function toggleWrap() {
+  if (doc.format.binary) return;
   doc.wrap = !doc.wrap;
   view.dispatch({ effects: wrapSlot.reconfigure(wrapExtension(doc.wrap)) });
   anchorsMeasured = false;
@@ -1412,7 +1474,7 @@ function showDocument() {
   updatePos();
   updateCount();
   if (!doc.started) return;
-  if (mode === "read") previewScroll.focus({ preventScroll: true });
+  if (mode === "read") focusPreview();
   else view.focus();
 }
 
@@ -1499,7 +1561,12 @@ async function openPath(path: string) {
     let data: FileData;
     let readOnly = false;
     try {
-      try {
+      if (formatOf(path).binary) {
+        // Checked and sized only: the viewer reads the bytes itself, nothing decodes them as text.
+        const info = await host.openBinary(path);
+        data = { path: info.path, content: "", mtime: info.mtime, encoding: "UTF-8", bom: false, guessed: false, size: info.size };
+        readOnly = true;
+      } else try {
         data = await host.readFile(path);
       } catch (err) {
         if (!(err instanceof TooLargeError)) throw err;
@@ -1534,6 +1601,7 @@ async function openPath(path: string) {
       takeFileData(tab, data);
       tab.readOnly = readOnly;
       tab.unmappable = false;
+      tab.viewerStatus = ["", ""];
     };
 
     if (isPristine()) {
@@ -1560,13 +1628,15 @@ function takeFileData(tab: Tab, data: FileData) {
   tab.bom = data.bom;
   tab.guessed = data.guessed;
   tab.size = data.size;
-  tab.large = data.size >= LARGE_FILE;
+  // A viewer (PDF) pages through big files on its own.
+  tab.large = data.size >= LARGE_FILE && !tab.format.binary;
   tab.previewWanted = false;
 }
 
 /** Dialog filters: every supported format first (the default), then each one. */
 function dialogFilters(first?: FormatPlugin): DialogFilter[] {
-  const formats = [...allFormats()].sort((a, b) => (a === first ? -1 : b === first ? 1 : 0));
+  // Saving (`first` given) never offers a binary format: text is not written as one.
+  const formats = [...allFormats()].filter((f) => !first || !f.binary).sort((a, b) => (a === first ? -1 : b === first ? 1 : 0));
   const each: DialogFilter[] = [];
   for (const f of formats) {
     const name = f.group ?? f.label;
@@ -1774,6 +1844,9 @@ function serial<T>(tab: Tab, job: () => Promise<T>): Promise<T> {
 
 /** Write the tab's current text to `target`; marks what was written as saved. */
 async function writeNow(tab: Tab, target: string) {
+  // Last line of defence: a binary file's tab has no text worth writing over it.
+  if (tab.format.binary) throw new Error(`${tab.format.label} 文件是只读的`);
+  if (formatFor(target).binary) throw new Error(`不能把文本保存为 ${formatFor(target).label} 文件`);
   const snapshot = textOf(tab);
   try {
     const written = await host.writeFile(target, snapshot.sliceString(0, snapshot.length, tab.eol), tab.encoding, tab.bom);
@@ -1869,6 +1942,10 @@ function suggestName(tab: Tab) {
 /** Explicit save (⌘S / ⇧⌘S). A draft becomes a real file and leaves staging. */
 async function save(as = false): Promise<boolean> {
   const tab = doc;
+  if (tab.format.binary) {
+    toast(`${tab.format.label} 文件只能查看，不能保存`);
+    return false;
+  }
   const before = tab.path ?? tab.draft ?? "";
   clearTimeout(tab.autosaveTimer);
   let target = tab.path;
@@ -1877,6 +1954,11 @@ async function save(as = false): Promise<boolean> {
     // an unlisted kind (.conf, .env, …) could not keep its own name there.
     target = await host.pickSavePath(tab.path ?? suggestName(tab), isMac ? [] : dialogFilters(tab.format));
     if (!target) return false;
+    const kind = formatFor(target);
+    if (kind.binary) {
+      await host.alert("无法保存", `edit2 不会把文本写成 ${kind.label} 文件：${basename(target)}`);
+      return false;
+    }
   }
   let written;
   try {
@@ -1936,6 +2018,16 @@ async function checkDisk() {
       refreshChrome();
     }
     if (tab.path !== path || tab.busy) return;
+    if (tab.format.binary) {
+      // Nothing is edited here: just show the new version.
+      const info = await host.openBinary(path);
+      if (doc !== tab || tab.path !== path) return;
+      tab.mtime = info.mtime;
+      tab.size = info.size;
+      refreshChrome();
+      if (mode !== "write") renderPreview();
+      return;
+    }
     if (tab.dirty && !(await host.confirmReload(tabName(tab)))) {
       // Keep mine: the next auto-save writes over the other version.
       tab.mtime = mtime;
@@ -2015,6 +2107,7 @@ const commands: Record<string, () => unknown> = {
   redo: () => mode !== "read" && redo(view),
   find: () => {
     if (!doc.started) return;
+    if (doc.format.binary) return toast(`${doc.format.label} 暂不支持查找`);
     if (mode === "read") setMode("write");
     openSearchPanel(view);
   },
@@ -2022,9 +2115,9 @@ const commands: Record<string, () => unknown> = {
   mode_split: () => setMode("split"),
   mode_read: () => setMode("read"),
   toggle_preview: () => setMode(mode === "write" ? "split" : "write"),
-  zoom_in: () => applyFont(fontSize + 1),
-  zoom_out: () => applyFont(fontSize - 1),
-  zoom_reset: () => applyFont(15),
+  zoom_in: () => zoom(1),
+  zoom_out: () => zoom(-1),
+  zoom_reset: () => zoom(0),
   toggle_wrap: () => doc.started && toggleWrap(),
   toggle_outline: toggleOutline,
   format_doc: () => runFormatter("format"),
