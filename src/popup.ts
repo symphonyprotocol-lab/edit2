@@ -50,8 +50,11 @@ export function showMenu(anchor: HTMLElement, entries: MenuEntry[]) {
   document.body.append(el);
   const a = anchor.getBoundingClientRect();
   const r = el.getBoundingClientRect();
-  el.style.left = `${Math.max(8, Math.min(a.right - r.width, window.innerWidth - r.width - 8))}px`;
-  el.style.top = `${Math.max(8, a.top - r.height - 6)}px`;
+  const left = a.right - r.width < 8 ? a.left : a.right - r.width;
+  el.style.left = `${Math.max(8, Math.min(left, window.innerWidth - r.width - 8))}px`;
+  // Above the button (the status bar), or below it when there is no room (the sidebar).
+  const above = a.top - r.height - 6;
+  el.style.top = `${above >= 8 ? above : Math.min(a.bottom + 6, window.innerHeight - r.height - 8)}px`;
   anchor.setAttribute("aria-expanded", "true");
 
   const items = () => [...el.querySelectorAll<HTMLButtonElement>(".popup-item:not(:disabled)")];
