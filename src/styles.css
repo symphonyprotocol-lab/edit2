@@ -345,6 +345,96 @@ button { font: inherit; color: inherit; }
 /* The sidebar draws its own line under the title bar. */
 #app.has-folder:not(.sidebar-hidden) .titlebar { border-bottom-color: var(--line); }
 
+/* ---------- outline (Markdown, Read view) ---------- */
+
+/* main.ts sets .has-outline (Read view, Markdown with headings), .outline-on (the
+   remembered choice) and .outline-cramped (panes narrower than OUTLINE_ROOM). */
+.outline {
+  display: none;
+  flex: 0 0 220px;
+  min-width: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  font-size: 12.5px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#app.has-outline.outline-on:not(.outline-cramped) .outline { display: flex; }
+.ol-head {
+  flex: none;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  padding: 0 44px 0 18px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.ol-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 24px;
+  position: relative;
+}
+.ol-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  padding: 4px 8px 4px calc(10px + var(--depth, 0) * 12px);
+  position: relative;
+  color: var(--ink-2);
+  font-size: inherit;
+  line-height: 1.45;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+.ol-item[data-depth="0"] { color: var(--ink); font-weight: 500; }
+.ol-item:hover { background: var(--hover); color: var(--ink); }
+.ol-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ol-item.active { color: var(--accent); background: var(--accent-soft); }
+.ol-item.active::before {
+  content: "";
+  position: absolute;
+  left: 2px; top: 6px; bottom: 6px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+/* One button shows and hides it: in the outline's header, or over the preview's corner. */
+.outline-toggle {
+  display: none;
+  position: absolute;
+  top: 6px;
+  right: 14px;
+  z-index: 3;
+  width: 26px; height: 26px;
+  border: 0; border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  place-items: center;
+  cursor: default;
+}
+#app.has-outline:not(.outline-cramped) .outline-toggle { display: grid; }
+.outline-toggle::before {
+  content: "";
+  width: 14px; height: 11px;
+  background:
+    linear-gradient(currentColor, currentColor) 0 0 / 14px 1.5px no-repeat,
+    linear-gradient(currentColor, currentColor) 4px 4.75px / 10px 1.5px no-repeat,
+    linear-gradient(currentColor, currentColor) 4px 9.5px / 10px 1.5px no-repeat;
+}
+.outline-toggle:hover { background: var(--hover); color: var(--ink); }
+.outline-toggle[aria-pressed="true"] { color: var(--ink-2); }
+.outline-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* ---------- folder sidebar ---------- */
 
 .sidebar {
