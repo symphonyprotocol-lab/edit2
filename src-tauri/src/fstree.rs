@@ -62,6 +62,67 @@ pub fn list(dir: &Path, show_hidden: bool) -> std::io::Result<Vec<Entry>> {
     Ok(entries)
 }
 
+/// Names Windows keeps for devices, with or without an extension.
+#[cfg(windows)]
+fn is_reserved_on_windows(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0')
+}
+
+/// Why `name` cannot be a new entry's name, if it cannot. One path
+/// component only: no separators, not `.` or `..`, no space around it.
+pub fn check_name(name: &str) -> Result<(), &'static str> {
+    if name.trim().is_empty() {
+        return Err("名称不能为空");
+    }
+    if name.trim() != name {
+        return Err("名称前后不能有空格");
+    }
+    if name == "." || name == ".." {
+        return Err("名称不能是 . 或 ..");
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        return Err("名称不能包含 / 或 \\");
+    }
+    #[cfg(windows)]
+    if name.contains(['<', '>', ':', '"', '|', '?', '*']) || name.ends_with(['.', ' ']) {
+        return Err("名称不能包含 < > : \" | ? * ，也不能以点或空格结尾");
+    }
+    #[cfg(windows)]
+    if is_reserved_on_windows(name) {
+        return Err("这是 Windows 保留的名称（如 CON、NUL、COM1）");
+    }
+    Ok(())
+}
+
+/// Make an empty file (or folder, with `dir`) called `name` in `parent`.
+/// Never replaces anything already there. Returns the new entry's path.
+pub fn create(parent: &Path, name: &str, dir: bool) -> Result<String, String> {
+    let name = name.trim();
+    check_name(name)?;
+    if !parent.is_dir() {
+        return Err("所在的文件夹不存在".into());
+    }
+    let path = parent.join(name);
+    if std::fs::symlink_metadata(&path).is_ok() {
+        return Err(format!("已经有名为“{name}”的文件或文件夹"));
+    }
+    let made = if dir {
+        std::fs::create_dir(&path)
+    } else {
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map(|_| ())
+    };
+    made.map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => format!("已经有名为“{name}”的文件或文件夹"),
+        _ => e.to_string(),
+    })?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +231,49 @@ mod tests {
         let entries = list(&s.0, false).unwrap();
         assert_eq!(names(&entries), ["linked", "real"]);
         assert!(entries.iter().all(|e| e.dir));
+    }
+
+    #[test]
+    fn creates_empty_files_and_folders_without_replacing() {
+        let s = Scratch::new("create");
+        let f = create(&s.0, "notes.weird-ext", false).unwrap();
+        assert_eq!(Path::new(&f), s.0.join("notes.weird-ext"));
+        assert_eq!(fs::read(&f).unwrap(), b"");
+        let d = create(&s.0, "sub", true).unwrap();
+        assert!(Path::new(&d).is_dir());
+        assert!(create(&s.0, "sub", false).is_err());
+        assert!(create(&s.0, "notes.weird-ext", true).is_err());
+        fs::write(&f, "keep").unwrap();
+        assert!(create(&s.0, "notes.weird-ext", false).is_err());
+        assert_eq!(fs::read(&f).unwrap(), b"keep");
+        assert!(create(&s.0.join("nope"), "a", false).is_err());
+    }
+
+    #[test]
+    fn rejects_names_that_are_not_one_component() {
+        for bad in ["", "  ", ".", "..", "a/b", "a\\b", " a.md", "a.md "] {
+            assert!(check_name(bad).is_err(), "{bad:?}");
+        }
+        for ok in ["a", ".env", "Makefile", "x.tar.gz", "中文.md"] {
+            assert!(check_name(ok).is_ok(), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn trims_the_name_before_creating() {
+        let s = Scratch::new("trim");
+        let f = create(&s.0, "  spaced.md ", false).unwrap();
+        assert_eq!(Path::new(&f), s.0.join("spaced.md"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_device_names() {
+        for bad in ["CON", "nul.md", "Com1.txt", "LPT9", "aux.tar.gz"] {
+            assert!(check_name(bad).is_err(), "{bad:?}");
+        }
+        for ok in ["CONSOLE.md", "com0", "COM10", "nullable.md"] {
+            assert!(check_name(ok).is_ok(), "{ok:?}");
+        }
     }
 }

@@ -595,6 +595,13 @@ fn list_dir(path: String, show_hidden: Option<bool>) -> Result<Vec<fstree::Entry
     fstree::list(Path::new(&path), show_hidden.unwrap_or(false)).map_err(|e| e.to_string())
 }
 
+/// Make an empty file or folder named `name` inside `parent` for the
+/// sidebar's New File / New Folder. Returns its path.
+#[tauri::command]
+fn create_entry(parent: String, name: String, dir: bool) -> Result<String, String> {
+    fstree::create(Path::new(&parent), &name, dir)
+}
+
 /// Read a text file, detecting its encoding unless one is given. A file over
 /// `CONFIRM_SIZE` fails with `TOO_LARGE:<bytes>` unless `force` is set.
 #[tauri::command]
@@ -825,6 +832,7 @@ pub fn run() {
             file_mtime,
             stat_path,
             list_dir,
+            create_entry,
             pick_file_or_folder,
             open_in_new_window,
             focus_if_open,

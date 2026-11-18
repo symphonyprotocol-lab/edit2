@@ -2242,7 +2242,22 @@ let folder: string | null = null;
 const tree = new FolderTree($("sb-tree"), {
   list: (path, showHidden) => host.listDir(path, showHidden),
   openFile: (path) => openPath(path),
+  create: (parent, name, dir) => host.createEntry(parent, name, dir),
+  contextMenu: (path, at) => showMenu(sidebarEl, treeMenu(path), at),
+  error: (message) => toast(message),
 });
+
+const revealLabel = isMac ? "在访达中显示" : "在资源管理器中显示";
+
+/** Right-click menu of the tree: on a row, or (null) on empty space, meaning the open folder. */
+function treeMenu(path: string | null): MenuEntry[] {
+  return [
+    { label: "新建文件…", run: () => tree.startCreate(false, path ?? folder) },
+    { label: "新建文件夹…", run: () => tree.startCreate(true, path ?? folder) },
+    "-",
+    { label: revealLabel, run: () => host.reveal(path ?? folder!) },
+  ];
+}
 
 const SIDEBAR_WIDTH = 240;
 const clampSidebar = (px: number) => Math.round(Math.max(160, Math.min(px, 600, window.innerWidth - 320)));
@@ -2316,6 +2331,9 @@ function toggleSidebar() {
 
 function folderMenu(): MenuEntry[] {
   return [
+    { label: "新建文件…", run: () => tree.startCreate(false) },
+    { label: "新建文件夹…", run: () => tree.startCreate(true) },
+    "-",
     { label: "刷新", run: () => tree.refresh() },
     {
       label: "显示隐藏文件",
@@ -2325,7 +2343,7 @@ function folderMenu(): MenuEntry[] {
         prefs.set("showHidden", tree.showHidden);
       },
     },
-    { label: isMac ? "在访达中显示" : "在资源管理器中显示", run: () => folder && host.reveal(folder) },
+    { label: revealLabel, run: () => folder && host.reveal(folder) },
     "-",
     { label: "关闭文件夹", run: closeFolder },
   ];
@@ -2342,6 +2360,8 @@ function syncFolderMenu() {
 
 sbMoreEl.addEventListener("click", () => showMenu(sbMoreEl, folderMenu()));
 $("sb-close").addEventListener("click", closeFolder);
+$("sb-new-file").addEventListener("click", () => tree.startCreate(false));
+$("sb-new-folder").addEventListener("click", () => tree.startCreate(true));
 sidebarBtn.addEventListener("click", toggleSidebar);
 
 // Drag the right edge to resize; double-click for the default width.

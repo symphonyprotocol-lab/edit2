@@ -2,6 +2,7 @@
  * The folder tree in the sidebar. It lists one level at a time (a folder's
  * children are read when it is expanded, and read again each time) and
  * reports clicks on files through a callback; opening them is main.ts's job.
+ * New files and folders are named in an input shown in place in the tree.
  */
 import type { DirEntry } from "./host";
 
@@ -9,6 +10,27 @@ export interface FolderTreeHandlers {
   /** List one folder, folders first. */
   list(path: string, showHidden: boolean): Promise<DirEntry[]>;
   openFile(path: string): void;
+  /** Make an empty file or folder; resolves to its path. */
+  create(parent: string, name: string, dir: boolean): Promise<string>;
+  /** Right-click on a row (`path`) or on empty space (null). */
+  contextMenu(path: string | null, at: { x: number; y: number }): void;
+  /** Something went wrong where there is no place in the tree to say it. */
+  error(message: string): void;
+}
+
+/** Name offered for a new entry; for a file only the part before the extension is selected. */
+const NEW_FILE_NAME = "未命名.md";
+const NEW_FOLDER_NAME = "新建文件夹";
+
+/** The new file or folder being named. */
+interface Creating {
+  parent: string;
+  dir: boolean;
+  /** Holds the input row and the line under it for errors. */
+  box: HTMLElement;
+  input: HTMLInputElement;
+  errorEl: HTMLElement;
+  busy: boolean;
 }
 
 type Listing = DirEntry[] | { error: string };
@@ -17,6 +39,8 @@ type Listing = DirEntry[] | { error: string };
 interface Row {
   entry: DirEntry;
   depth: number;
+  /** The folder it is listed in. */
+  parent: string;
 }
 
 export class FolderTree {
@@ -35,6 +59,9 @@ export class FolderTree {
   private focusPath: string | null = null;
   /** Bumped when another folder is opened, to drop late listings of the old one. */
   private generation = 0;
+  private creating: Creating | null = null;
+  /** Set while the tree's nodes are replaced, when a blur is not the user leaving the input. */
+  private rerendering = false;
 
   constructor(
     private el: HTMLElement,
@@ -46,11 +73,21 @@ export class FolderTree {
       if (row?.dataset.path) this.activateRow(row.dataset.path, true);
     });
     el.addEventListener("keydown", this.onKey);
+    el.addEventListener("contextmenu", (e) => {
+      if ((e.target as HTMLElement).closest(".ft-create")) return; // the input's own menu
+      e.preventDefault();
+      const target = e.target as HTMLElement;
+      // A row, or the "empty"/"unreadable" note under a folder, meaning that folder.
+      const path = target.closest<HTMLElement>(".ft-row")?.dataset.path ?? target.closest<HTMLElement>(".ft-note")?.dataset.folder ?? null;
+      if (path && this.els.has(path)) this.moveFocusStop(path);
+      this.h.contextMenu(path, { x: e.clientX, y: e.clientY });
+    });
   }
 
   /** Show `root`'s contents. Rejects if the folder cannot be read. */
   async open(root: string) {
     this.generation++;
+    this.creating = null;
     this.root = root;
     this.expanded = new Set([root]);
     this.listings.clear();
@@ -65,6 +102,7 @@ export class FolderTree {
 
   close() {
     this.generation++;
+    this.creating = null;
     this.root = null;
     this.expanded.clear();
     this.listings.clear();
@@ -107,7 +145,132 @@ export class FolderTree {
     (this.els.get(this.focusPath ?? "") ?? this.el.querySelector<HTMLElement>(".ft-row"))?.focus();
   }
 
+  /**
+   * Start naming a new file (or folder, with `dir`). It goes into `target`
+   * if that is a folder, beside it if it is a file; with no target, next to
+   * the row last clicked or moved to, or at the top of the tree.
+   */
+  startCreate(dir: boolean, target: string | null = this.focusPath) {
+    if (!this.root) return;
+    const row = target ? this.rows.find((r) => r.entry.path === target) : undefined;
+    const parent = row ? (row.entry.dir ? row.entry.path : row.parent) : this.root;
+    this.cancelCreate(false);
+
+    const box = document.createElement("div");
+    box.className = "ft-create";
+    const line = document.createElement("div");
+    line.className = dir ? "ft-edit dir" : "ft-edit file";
+    const chev = Object.assign(document.createElement("span"), { className: "ft-chev" });
+    chev.setAttribute("aria-hidden", "true");
+    const input = document.createElement("input");
+    input.className = "ft-input";
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    input.setAttribute("autocapitalize", "off");
+    input.setAttribute("aria-label", dir ? "新文件夹的名称" : "新文件的名称（含后缀）");
+    input.value = dir ? NEW_FOLDER_NAME : NEW_FILE_NAME;
+    line.append(chev, input);
+    const errorEl = Object.assign(document.createElement("div"), { className: "ft-note ft-error" });
+    errorEl.setAttribute("role", "alert");
+    errorEl.hidden = true;
+    box.append(line, errorEl);
+    const c: Creating = { parent, dir, box, input, errorEl, busy: false };
+    this.creating = c;
+
+    // Enter and Escape are the input's; other keys (app shortcuts) go on as usual.
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.commitCreate(c, true);
+      } else if (e.key === "Escape" && !e.isComposing) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.cancelCreate(true);
+      }
+    });
+    input.addEventListener("input", () => this.showCreateError(c, ""));
+    const offered = input.value;
+    input.addEventListener("blur", () => {
+      if (this.rerendering || this.creating !== c || c.busy) return;
+      // The window went to the back: keep the input as it is for when it returns.
+      if (!document.hasFocus()) return;
+      // Clicking elsewhere keeps a name the user typed, as Enter would; the
+      // name we offered is never made without Enter.
+      const value = c.input.value.trim();
+      if (value && value !== offered) this.commitCreate(c, false);
+      else this.cancelCreate(false);
+    });
+
+    if (parent !== this.root && !this.expanded.has(parent)) this.setExpanded(parent, true);
+    else this.render();
+    input.focus();
+    const dot = input.value.lastIndexOf(".");
+    input.setSelectionRange(0, dir || dot <= 0 ? input.value.length : dot);
+  }
+
   // ---------- internals ----------
+
+  private cancelCreate(refocus: boolean) {
+    if (!this.creating) return;
+    this.creating = null;
+    this.render();
+    if (refocus) this.focus();
+  }
+
+  private showCreateError(c: Creating, message: string) {
+    c.errorEl.textContent = message;
+    c.errorEl.hidden = !message;
+    c.input.classList.toggle("invalid", !!message);
+  }
+
+  /** Make the entry. After an error, stay in the input if the user pressed Enter, else give up and say why. */
+  private async commitCreate(c: Creating, stay: boolean) {
+    const name = c.input.value.trim();
+    if (!name) {
+      if (stay) this.showCreateError(c, "请输入名称");
+      else this.cancelCreate(false);
+      return;
+    }
+    const gen = this.generation;
+    c.busy = true;
+    c.input.readOnly = true;
+    let path: string;
+    try {
+      path = await this.h.create(c.parent, name, c.dir);
+    } catch (err) {
+      c.busy = false;
+      c.input.readOnly = false;
+      if (this.creating !== c) return;
+      const message = String(err).replace(/^Error:\s*/, "");
+      if (stay) {
+        this.showCreateError(c, message);
+        c.input.focus();
+      } else {
+        this.cancelCreate(false);
+        this.h.error(`无法新建${c.dir ? "文件夹" : "文件"}：${message}`);
+      }
+      return;
+    }
+    // Another new entry may be being named by now: then leave the focus with it.
+    const superseded = this.creating !== c;
+    if (!superseded) this.creating = null;
+    if (gen !== this.generation) return;
+    const listing = await this.read(c.parent);
+    if (gen !== this.generation) return;
+    const shown = !("error" in listing) && listing.some((e) => e.path === path);
+    if (!shown) this.h.error(`已新建“${name}”。它是隐藏的，打开“显示隐藏文件”才能在边栏看到`);
+    if (superseded && this.creating) return;
+    if (shown) this.focusPath = path;
+    if (!c.dir) this.h.openFile(path);
+    else if (shown) this.focus();
+  }
+
+  /** Make `path`'s row the one Tab lands on. */
+  private moveFocusStop(path: string) {
+    this.focusPath = path;
+    for (const [p, el] of this.els) el.tabIndex = p === path ? 0 : -1;
+  }
 
   private async read(path: string, rerender = true): Promise<Listing> {
     const gen = this.generation;
@@ -156,13 +319,16 @@ export class FolderTree {
     const listing = this.listings.get(dir);
     if (!listing || "error" in listing) return;
     for (const entry of listing) {
-      out.push({ entry, depth });
+      out.push({ entry, depth, parent: dir });
       if (entry.dir && this.expanded.has(entry.path)) this.collectRows(entry.path, depth + 1, out);
     }
   }
 
   private render() {
     const hadFocus = this.el.contains(document.activeElement);
+    const creating = this.creating;
+    const editing = !!creating && document.activeElement === creating.input;
+    const selection = creating && [creating.input.selectionStart, creating.input.selectionEnd, creating.input.selectionDirection] as const;
     this.rows = [];
     this.els.clear();
     if (!this.root) {
@@ -173,6 +339,11 @@ export class FolderTree {
     if (!this.rows.some((r) => r.entry.path === this.focusPath)) this.focusPath = this.rows[0]?.entry.path ?? null;
 
     const nodes: HTMLElement[] = [];
+    const placeCreate = (depth: number) => {
+      creating!.box.style.setProperty("--depth", String(depth));
+      nodes.push(creating!.box);
+    };
+    if (creating?.parent === this.root) placeCreate(0);
     for (const { entry, depth } of this.rows) {
       const row = document.createElement("div");
       row.className = entry.dir ? "ft-row dir" : "ft-row file";
@@ -197,24 +368,38 @@ export class FolderTree {
       row.append(chev, name);
       nodes.push(row);
       this.els.set(entry.path, row);
+      if (creating?.parent === entry.path && entry.dir && this.expanded.has(entry.path)) placeCreate(depth + 1);
 
       // A folder that could not be read, or has nothing to show.
       const listing = entry.dir && this.expanded.has(entry.path) ? this.listings.get(entry.path) : undefined;
-      if (listing && ("error" in listing || listing.length === 0)) {
+      if (listing && ("error" in listing || (listing.length === 0 && creating?.parent !== entry.path))) {
         const note = document.createElement("div");
         note.className = "ft-note";
         note.style.setProperty("--depth", String(depth + 1));
+        note.dataset.folder = entry.path;
         note.textContent = "error" in listing ? "无法读取" : "空文件夹";
         if ("error" in listing) note.title = listing.error;
         nodes.push(note);
       }
     }
     const rootListing = this.listings.get(this.root);
-    if (rootListing && !("error" in rootListing) && rootListing.length === 0) {
+    if (rootListing && !("error" in rootListing) && rootListing.length === 0 && creating?.parent !== this.root) {
       nodes.push(Object.assign(document.createElement("div"), { className: "ft-note", textContent: "空文件夹" }));
     }
-    this.el.replaceChildren(...nodes);
-    if (hadFocus) this.focus();
+    // A new entry's folder that is no longer shown (e.g. it was deleted): give up.
+    if (creating && !nodes.includes(creating.box)) this.creating = null;
+    this.rerendering = true;
+    try {
+      this.el.replaceChildren(...nodes);
+    } finally {
+      this.rerendering = false;
+    }
+    if (this.creating && (editing || !hadFocus)) {
+      if (editing) {
+        this.creating.input.focus();
+        if (selection) this.creating.input.setSelectionRange(selection[0], selection[1], selection[2] ?? undefined);
+      }
+    } else if (hadFocus) this.focus();
   }
 
   private parentRow(i: number): number {
@@ -262,10 +447,7 @@ export class FolderTree {
     e.preventDefault();
     e.stopPropagation();
     if (next < 0) return;
-    this.focusPath = this.rows[next].entry.path;
-    for (const el of this.els.values()) el.tabIndex = -1;
-    const el = this.els.get(this.focusPath)!;
-    el.tabIndex = 0;
-    el.focus();
+    this.moveFocusStop(this.rows[next].entry.path);
+    this.els.get(this.focusPath!)!.focus();
   };
 }
