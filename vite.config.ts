@@ -1,4 +1,4 @@
-import { readdir, readFile, stat, realpath } from "node:fs/promises";
+import { readdir, readFile, stat, realpath, mkdir, writeFile } from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, normalize, sep } from "node:path";
@@ -11,7 +11,7 @@ const HEAVY_DIRS = ["node_modules", "__pycache__"];
 
 /**
  * `npm run dev` in a plain browser has no backend: answer the folder sidebar's
- * listing and stat calls here so the tree can be tried with real folders.
+ * listing, stat and create calls here so the tree can be tried with real folders.
  */
 function devFolders(): Plugin {
   return {
@@ -30,6 +30,24 @@ function devFolders(): Plugin {
           if (url.pathname === "/stat") {
             const info = await stat(path).catch(() => null);
             return send(200, info && { path: await realpath(path), dir: info.isDirectory() });
+          }
+          if (url.pathname === "/new") {
+            // It writes to disk: only for this page, never a GET another site could trigger.
+            const site = req.headers["sec-fetch-site"];
+            if (req.method !== "POST" || req.headers["x-edit2"] !== "1" || (site && site !== "same-origin")) {
+              return send(403, "forbidden");
+            }
+            const name = url.searchParams.get("name") ?? "";
+            if (!name.trim() || name === "." || name === ".." || /[\\/]/.test(name)) return send(400, "名称无效");
+            const full = join(path, name);
+            try {
+              if (url.searchParams.has("dir")) await mkdir(full);
+              else await writeFile(full, "", { flag: "wx" });
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException).code === "EEXIST") return send(409, `已经有名为“${name}”的文件或文件夹`);
+              throw err;
+            }
+            return send(200, full);
           }
           if (url.pathname !== "/ls") return send(404, "unknown");
           const hidden = url.searchParams.has("hidden");

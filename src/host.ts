@@ -122,9 +122,10 @@ function devBinary(path: string): Promise<Uint8Array> {
  * Dev only, in a plain browser: list folders through a small vite middleware
  * (see vite.config.ts), which follows the same rules as the backend.
  */
-async function devFs<T>(op: "ls" | "stat", path: string, hidden = false): Promise<T> {
+async function devFs<T>(op: "ls" | "stat" | "new", path: string, hidden = false, extra = ""): Promise<T> {
   if (!import.meta.env.DEV) throw new Error("需要在 Tauri 中运行");
-  const res = await fetch(`/__edit2/${op}?path=${encodeURIComponent(path)}${hidden ? "&hidden=1" : ""}`);
+  const init: RequestInit = op === "new" ? { method: "POST", headers: { "X-Edit2": "1" } } : {};
+  const res = await fetch(`/__edit2/${op}?path=${encodeURIComponent(path)}${hidden ? "&hidden=1" : ""}${extra}`, init);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -155,6 +156,12 @@ export const host = {
   /** One level of a folder, folders first; dotfiles and node_modules only with `showHidden`. */
   listDir: (path: string, showHidden = false): Promise<DirEntry[]> =>
     inTauri ? invoke("list_dir", { path, showHidden }) : devFs("ls", path, showHidden),
+
+  /** Make an empty file (or folder) `name` in `parent`, never replacing one; resolves to its path. */
+  createEntry: (parent: string, name: string, dir: boolean): Promise<string> =>
+    inTauri
+      ? invoke<string>("create_entry", { parent, name, dir })
+      : devFs<string>("new", parent, false, `&name=${encodeURIComponent(name)}${dir ? "&dir=1" : ""}`),
 
   /** Canonical path and kind, or null if nothing is there. */
   statPath: (path: string): Promise<PathInfo | null> =>
