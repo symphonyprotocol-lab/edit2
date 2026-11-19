@@ -4,6 +4,7 @@ import {
   keymap,
   drawSelection,
   highlightSpecialChars,
+  lineNumbers,
   dropCursor,
   rectangularSelection,
   crosshairCursor,
@@ -30,6 +31,8 @@ const theme = EditorView.theme({
     caretColor: "var(--accent)",
   },
   ".cm-line": { padding: "0" },
+  ".cm-gutters": { backgroundColor: "var(--bg)", color: "var(--ink-3)", border: "none", userSelect: "none" },
+  ".cm-lineNumbers .cm-gutterElement": { padding: "0 10px 0 12px", minWidth: "2.5em", fontSize: "0.85em" },
   "&.cm-focused": { outline: "none" },
   ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--accent)" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection":
@@ -106,6 +109,7 @@ export const readOnlyExtension = (on: boolean) => (on ? [EditorState.readOnly.of
 
 export function editorExtensions(onUpdate: Extension, setup: EditorSetup): Extension[] {
   return [
+    lineNumbers(),
     highlightSpecialChars(),
     history(),
     drawSelection(),
