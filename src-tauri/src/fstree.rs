@@ -2,7 +2,7 @@
 //! asks for a folder's children when it is expanded.
 
 use std::cmp::Ordering;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use serde::Serialize;
 
@@ -121,6 +121,33 @@ pub fn create(parent: &Path, name: &str, dir: bool) -> Result<String, String> {
         _ => e.to_string(),
     })?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Check that `path` may be moved to the trash from the sidebar showing
+/// `root`: it must be inside `root` (not `root` itself), spelled without
+/// `..`, and exist. Compared as written, so a symlinked folder in the tree
+/// counts as inside, and a symlink is trashed itself, not what it points to.
+pub fn check_trashable(root: &Path, path: &Path) -> Result<(), String> {
+    let plain = |p: &Path| p.is_absolute() && !p.components().any(|c| matches!(c, Component::ParentDir));
+    if !plain(root) || !plain(path) || path == root || !path.starts_with(root) {
+        return Err("只能删除当前文件夹里的文件和文件夹".into());
+    }
+    std::fs::symlink_metadata(path).map_err(|_| "它已经不在了".to_string())?;
+    Ok(())
+}
+
+/// Move `path` to the Trash (Recycle Bin on Windows), after `check_trashable`.
+pub fn trash(root: &Path, path: &Path) -> Result<(), String> {
+    check_trashable(root, path)?;
+    #[allow(unused_mut)]
+    let mut ctx = trash::TrashContext::default();
+    // Finder's way needs permission to script Finder; this one needs none.
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    ctx.delete(path).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -275,5 +302,22 @@ mod tests {
         for ok in ["CONSOLE.md", "com0", "COM10", "nullable.md"] {
             assert!(check_name(ok).is_ok(), "{ok:?}");
         }
+    }
+
+    #[test]
+    fn only_entries_inside_the_folder_can_be_trashed() {
+        let s = Scratch::new("trashable");
+        s.file("docs/a.md");
+        let root = s.0.as_path();
+        assert!(check_trashable(root, &s.0.join("docs")).is_ok());
+        assert!(check_trashable(root, &s.0.join("docs/a.md")).is_ok());
+        assert!(check_trashable(root, root).is_err(), "the folder itself");
+        assert!(check_trashable(root, &s.0.join("docs/../docs")).is_err(), "..");
+        assert!(check_trashable(root, &s.0.join("missing.md")).is_err());
+        assert!(check_trashable(&s.0.join("docs"), &s.0.join("other")).is_err(), "outside");
+        assert!(check_trashable(root, Path::new("docs/a.md")).is_err(), "relative");
+        // A sibling whose name starts with the folder's name is still outside.
+        let sibling = PathBuf::from(format!("{}-x", s.0.display()));
+        assert!(check_trashable(root, &sibling).is_err());
     }
 }

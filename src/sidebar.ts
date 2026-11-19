@@ -16,11 +16,19 @@ export interface FolderTreeHandlers {
   contextMenu(path: string | null, at: { x: number; y: number }): void;
   /** Something went wrong where there is no place in the tree to say it. */
   error(message: string): void;
+  /** Ask, then move a file or folder to the Trash; resolves to whether it went. */
+  trash(path: string, dir: boolean): Promise<boolean>;
+}
+
+/** `path` is `base` or inside it (either separator, for Windows paths). */
+export function isWithin(path: string, base: string) {
+  return path === base || path.startsWith(base + "/") || path.startsWith(base + "\\");
 }
 
 /** Name offered for a new entry; for a file only the part before the extension is selected. */
 const NEW_FILE_NAME = "未命名.md";
 const NEW_FOLDER_NAME = "新建文件夹";
+const DELETE_TITLE = /Mac/i.test(navigator.userAgent) ? "移到废纸篓（⌘⌫）" : "删除（Delete）";
 
 /** The new file or folder being named. */
 interface Creating {
@@ -70,6 +78,10 @@ export class FolderTree {
     el.setAttribute("role", "tree");
     el.addEventListener("click", (e) => {
       const row = (e.target as HTMLElement).closest<HTMLElement>(".ft-row");
+      if (row?.dataset.path && (e.target as HTMLElement).closest(".ft-del")) {
+        this.requestDelete(row.dataset.path);
+        return;
+      }
       if (row?.dataset.path) this.activateRow(row.dataset.path, true);
     });
     el.addEventListener("keydown", this.onKey);
@@ -207,6 +219,28 @@ export class FolderTree {
     input.focus();
     const dot = input.value.lastIndexOf(".");
     input.setSelectionRange(0, dir || dot <= 0 ? input.value.length : dot);
+  }
+
+  /** Move a row's file or folder to the Trash (after the handler asks), keeping the focus nearby. */
+  async requestDelete(path: string) {
+    const i = this.rows.findIndex((r) => r.entry.path === path);
+    if (i < 0) return;
+    const { entry } = this.rows[i];
+    const hadFocus = this.el.contains(document.activeElement);
+    this.moveFocusStop(path); // a cancel comes back to this row
+    if (!(await this.h.trash(path, entry.dir))) {
+      if (hadFocus) this.focus();
+      return;
+    }
+    // The row after it (skipping its own children), else the one before.
+    const after = this.rows.slice(i + 1).find((r) => !isWithin(r.entry.path, path));
+    const next = after ?? this.rows[i - 1];
+    for (const p of [...this.expanded]) if (isWithin(p, path)) this.expanded.delete(p);
+    for (const p of [...this.listings.keys()]) if (isWithin(p, path)) this.listings.delete(p);
+    if (this.creating && isWithin(this.creating.parent, path)) this.creating = null;
+    this.focusPath = next?.entry.path ?? null;
+    await this.refresh();
+    if (hadFocus) this.focus();
   }
 
   // ---------- internals ----------
@@ -365,7 +399,12 @@ export class FolderTree {
       const name = document.createElement("span");
       name.className = "ft-name";
       name.textContent = entry.name;
-      row.append(chev, name);
+      // Shown on hover; the keyboard way is ⌘⌫ / Delete on the row.
+      const del = document.createElement("span");
+      del.className = "ft-del";
+      del.title = DELETE_TITLE;
+      del.setAttribute("aria-hidden", "true");
+      row.append(chev, name, del);
       nodes.push(row);
       this.els.set(entry.path, row);
       if (creating?.parent === entry.path && entry.dir && this.expanded.has(entry.path)) placeCreate(depth + 1);
@@ -410,7 +449,17 @@ export class FolderTree {
 
   private onKey = (e: KeyboardEvent) => {
     const current = (e.target as HTMLElement).closest<HTMLElement>(".ft-row");
-    if (!current || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!current) return;
+    // ⌘⌫ (as in Finder) or Delete: move to the Trash.
+    const plainDelete = e.key === "Delete" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+    const cmdBackspace = e.key === "Backspace" && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+    if ((plainDelete || cmdBackspace) && current.dataset.path) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.requestDelete(current.dataset.path);
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     const i = this.rows.findIndex((r) => r.entry.path === current.dataset.path);
     if (i < 0) return;
     const row = this.rows[i];
