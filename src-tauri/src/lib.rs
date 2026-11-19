@@ -602,6 +602,15 @@ fn create_entry(parent: String, name: String, dir: bool) -> Result<String, Strin
     fstree::create(Path::new(&parent), &name, dir)
 }
 
+/// Move a file or folder in the sidebar's folder `root` to the Trash
+/// (Recycle Bin on Windows). Refuses anything outside `root`, and `root` itself.
+#[tauri::command]
+async fn move_to_trash(root: String, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || fstree::trash(Path::new(&root), Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Read a text file, detecting its encoding unless one is given. A file over
 /// `CONFIRM_SIZE` fails with `TOO_LARGE:<bytes>` unless `force` is set.
 #[tauri::command]
@@ -833,6 +842,7 @@ pub fn run() {
             stat_path,
             list_dir,
             create_entry,
+            move_to_trash,
             pick_file_or_folder,
             open_in_new_window,
             focus_if_open,

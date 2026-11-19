@@ -35,7 +35,7 @@ import {
 } from "./formats";
 import { host, inTauri, isMac, TooLargeError, UnmappableError, type DialogFilter, type FileData, type UpdateReady } from "./host";
 import { TabBar, type TabBarHandlers } from "./tabs";
-import { FolderTree } from "./sidebar";
+import { FolderTree, isWithin } from "./sidebar";
 import { showMenu, closeMenu, type MenuEntry } from "./popup";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -2245,9 +2245,42 @@ const tree = new FolderTree($("sb-tree"), {
   create: (parent, name, dir) => host.createEntry(parent, name, dir),
   contextMenu: (path, at) => showMenu(sidebarEl, treeMenu(path), at),
   error: (message) => toast(message),
+  trash: (path, dir) => trashEntry(path, dir),
 });
 
 const revealLabel = isMac ? "在访达中显示" : "在资源管理器中显示";
+const trashLabel = isMac ? "移到废纸篓" : "删除";
+
+/**
+ * Move a file or folder from the sidebar to the Trash, after asking. Its open
+ * tabs are saved first (their edits go to the Trash with the file), then
+ * closed; one whose edits could not be saved stays open, marked as removed.
+ */
+async function trashEntry(path: string, dir: boolean): Promise<boolean> {
+  const root = folder;
+  if (!root) return false;
+  const affected = allTabs().filter((t) => t.path && isWithin(t.path, path));
+  const unsaved = affected.filter((t) => t.dirty).length;
+  if (!(await host.confirmTrash(basename(path), dir, unsaved))) return false;
+  await Promise.all(affected.map((t) => autosave(t)));
+  try {
+    await host.moveToTrash(root, path);
+  } catch (err) {
+    await host.alert(`无法${trashLabel}“${basename(path)}”`, String(err));
+    return false;
+  }
+  for (const t of affected) {
+    if (!allTabs().includes(t)) continue;
+    if (t.dirty) {
+      t.missing = true;
+      continue;
+    }
+    t.missing = false; // nothing to lose: close without asking
+    await closeTab(t);
+  }
+  refreshChrome();
+  return true;
+}
 
 /** Right-click menu of the tree: on a row, or (null) on empty space, meaning the open folder. */
 function treeMenu(path: string | null): MenuEntry[] {
@@ -2256,6 +2289,9 @@ function treeMenu(path: string | null): MenuEntry[] {
     { label: "新建文件夹…", run: () => tree.startCreate(true, path ?? folder) },
     "-",
     { label: revealLabel, run: () => host.reveal(path ?? folder!) },
+    ...(path && path !== folder
+      ? (["-", { label: trashLabel, hint: isMac ? "⌘⌫" : "Delete", run: () => tree.requestDelete(path) }] as MenuEntry[])
+      : []),
   ];
 }
 

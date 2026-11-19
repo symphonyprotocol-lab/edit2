@@ -122,9 +122,10 @@ function devBinary(path: string): Promise<Uint8Array> {
  * Dev only, in a plain browser: list folders through a small vite middleware
  * (see vite.config.ts), which follows the same rules as the backend.
  */
-async function devFs<T>(op: "ls" | "stat" | "new", path: string, hidden = false, extra = ""): Promise<T> {
+async function devFs<T>(op: "ls" | "stat" | "new" | "trash", path: string, hidden = false, extra = ""): Promise<T> {
   if (!import.meta.env.DEV) throw new Error("需要在 Tauri 中运行");
-  const init: RequestInit = op === "new" ? { method: "POST", headers: { "X-Edit2": "1" } } : {};
+  const writes = op === "new" || op === "trash";
+  const init: RequestInit = writes ? { method: "POST", headers: { "X-Edit2": "1" } } : {};
   const res = await fetch(`/__edit2/${op}?path=${encodeURIComponent(path)}${hidden ? "&hidden=1" : ""}${extra}`, init);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -162,6 +163,25 @@ export const host = {
     inTauri
       ? invoke<string>("create_entry", { parent, name, dir })
       : devFs<string>("new", parent, false, `&name=${encodeURIComponent(name)}${dir ? "&dir=1" : ""}`),
+
+  /** Move `path`, inside the sidebar's folder `root`, to the Trash (Recycle Bin on Windows). */
+  moveToTrash: (root: string, path: string): Promise<void> =>
+    inTauri
+      ? invoke<void>("move_to_trash", { root, path })
+      : devFs<void>("trash", path, false, `&root=${encodeURIComponent(root)}`),
+
+  /** Ask before moving a file or folder to the Trash. */
+  async confirmTrash(name: string, dir: boolean, unsaved: number): Promise<boolean> {
+    const bin = isMac ? "废纸篓" : "回收站";
+    const lines = [
+      dir ? "文件夹里的所有内容也会一起移走。" : "",
+      !unsaved ? "" : dir ? `其中 ${unsaved} 个打开的文件有还没保存的修改，会先保存再移走。` : "它有还没保存的修改，会先保存再移走。",
+      `之后可以从${bin}中找回。`,
+    ].filter(Boolean);
+    const title = `要将${dir ? "文件夹" : ""}“${name}”移到${bin}吗？`;
+    if (!inTauri) return confirm(`${title}\n\n${lines.join("\n")}`);
+    return confirmDialog(lines.join("\n"), { title, kind: "warning", okLabel: `移到${bin}`, cancelLabel: "取消" });
+  },
 
   /** Canonical path and kind, or null if nothing is there. */
   statPath: (path: string): Promise<PathInfo | null> =>

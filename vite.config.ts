@@ -1,6 +1,7 @@
-import { readdir, readFile, stat, realpath, mkdir, writeFile } from "node:fs/promises";
+import { readdir, readFile, stat, realpath, mkdir, writeFile, rename, lstat } from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join, normalize, sep } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
@@ -31,12 +32,24 @@ function devFolders(): Plugin {
             const info = await stat(path).catch(() => null);
             return send(200, info && { path: await realpath(path), dir: info.isDirectory() });
           }
+          const writes = url.pathname === "/new" || url.pathname === "/trash";
+          // These write to disk: only for this page, never a GET another site could trigger.
+          const site = req.headers["sec-fetch-site"];
+          if (writes && (req.method !== "POST" || req.headers["x-edit2"] !== "1" || (site && site !== "same-origin"))) {
+            return send(403, "forbidden");
+          }
+          if (url.pathname === "/trash") {
+            // No system Trash here: move it aside into a folder under the temp dir.
+            const root = url.searchParams.get("root") ?? "";
+            const inside = path !== root && path.startsWith(root.endsWith(sep) ? root : root + sep) && !path.split(sep).includes("..");
+            if (!root || !inside) return send(400, "只能删除当前文件夹里的文件和文件夹");
+            await lstat(path);
+            const bin = join(tmpdir(), "edit2-dev-trash");
+            await mkdir(bin, { recursive: true });
+            await rename(path, join(bin, `${Date.now()}-${path.split(sep).pop()}`));
+            return send(200, null);
+          }
           if (url.pathname === "/new") {
-            // It writes to disk: only for this page, never a GET another site could trigger.
-            const site = req.headers["sec-fetch-site"];
-            if (req.method !== "POST" || req.headers["x-edit2"] !== "1" || (site && site !== "same-origin")) {
-              return send(403, "forbidden");
-            }
             const name = url.searchParams.get("name") ?? "";
             if (!name.trim() || name === "." || name === ".." || /[\\/]/.test(name)) return send(400, "名称无效");
             const full = join(path, name);
